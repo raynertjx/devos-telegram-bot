@@ -1,4 +1,5 @@
 import html
+import json
 import os
 import re
 import sqlite3
@@ -6,7 +7,7 @@ from datetime import datetime, time as dtime
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
-import pdfplumber
+import fitz
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
@@ -38,6 +39,7 @@ def load_config() -> dict:
     token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
     pdf_path = os.getenv("DEVOTIONAL_PDF", "./bible-in-a-year-2026-volume-1-2.pdf")
+    json_path = os.getenv("DEVOTIONAL_JSON", "./devotionals.json")
     send_time = os.getenv("SEND_TIME", "07:00")
     timezone = os.getenv("TIMEZONE", "Asia/Singapore")
     admin_ids_raw = os.getenv("ADMIN_IDS", "349988134")
@@ -56,6 +58,7 @@ def load_config() -> dict:
         "token": token,
         "chat_id": int(chat_id) if chat_id else None,
         "pdf_path": pdf_path,
+        "json_path": json_path,
         "send_time": dtime(hour=hour, minute=minute),
         "timezone": timezone,
         "admin_ids": set(admin_ids),
@@ -69,9 +72,9 @@ def load_pdf_text(pdf_path: str, mtime: float) -> str:
         return ""
 
     pages = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text(x_tolerance=2, y_tolerance=2, layout=True) or ""
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            text = page.get_text() or ""
             pages.append(text)
 
     return "\n\n".join(pages)
@@ -140,6 +143,27 @@ def extract_devotional_for_date(pdf_path: str, target_date: datetime) -> str:
     entries = split_entries(combined)
     entry = find_entry_for_date(entries, target_date)
     return entry or "Devotional not found for today."
+
+
+@lru_cache(maxsize=2)
+def load_devotionals_json(json_path: str, mtime: float) -> dict:
+    if not os.path.exists(json_path):
+        return {}
+    try:
+        with open(json_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data.get("devotionals", {})
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def extract_from_json(json_path: str, target_date: datetime) -> str:
+    if not os.path.exists(json_path):
+        return ""
+    mtime = os.path.getmtime(json_path)
+    devotionals = load_devotionals_json(json_path, mtime)
+    key = target_date.strftime("%Y-%m-%d")
+    return devotionals.get(key, "")
 
 
 def to_html_pre(text: str) -> str:
@@ -213,7 +237,9 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
     now = datetime.now(tz)
-    text = extract_devotional_for_date(cfg["pdf_path"], now)
+    text = extract_from_json(cfg["json_path"], now)
+    if not text:
+        text = extract_devotional_for_date(cfg["pdf_path"], now)
 
     chat_ids = list_subscribers(cfg)
     if not chat_ids and cfg["chat_id"]:
@@ -253,7 +279,9 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
     now = datetime.now(tz)
-    text = extract_devotional_for_date(cfg["pdf_path"], now)
+    text = extract_from_json(cfg["json_path"], now)
+    if not text:
+        text = extract_devotional_for_date(cfg["pdf_path"], now)
 
     for chunk in chunk_text(text):
         await update.message.reply_text(

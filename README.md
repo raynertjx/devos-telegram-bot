@@ -19,6 +19,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Optional: Prebuild JSON for faster lookups (only rewrites when PDF changes):
+
+```bash
+python build_devotionals_json.py
+```
+
 ## Notes
 
 - The PDF extraction is intentionally minimal. Update `extract_devotional_for_date` in `main.py` to match the PDF's structure.
@@ -26,5 +32,6 @@ python main.py
 - Users subscribe by messaging `/start`, and can unsubscribe with `/stop`.
 - `ADMIN_IDS` is a comma-separated list of numeric Telegram user IDs allowed to use `/broadcast`.
 - `CHAT_ID` is optional (fallback target if no subscribers exist).
+- `DEVOTIONAL_JSON` (default `./devotionals.json`) is read first; it falls back to PDF if missing.
 - The message is sent in `<pre>` HTML to preserve line breaks and spacing.
 - Use `/today` to test the current day's devotional immediately.

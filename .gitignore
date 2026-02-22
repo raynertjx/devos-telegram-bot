@@ -11,3 +11,4 @@ build/
 .pytest_cache/
 *.log
 subscribers.sqlite3
+devotionals.json
