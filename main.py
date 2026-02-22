@@ -27,6 +27,30 @@ MONTHS = (
     "December",
 )
 
+BIBLE_MAP = {
+    # Old Testament
+    "Genesis": "GEN", "Exodus": "EXO", "Leviticus": "LEV", "Numbers": "NUM",
+    "Deuteronomy": "DEU", "Joshua": "JOS", "Judges": "JDG", "Ruth": "RUT",
+    "1 Samuel": "1SA", "2 Samuel": "2SA", "1 Kings": "1KI", "2 Kings": "2KI",
+    "1 Chronicles": "1CH", "2 Chronicles": "2CH", "Ezra": "EZR", "Nehemiah": "NEH",
+    "Esther": "EST", "Job": "JOB", "Psalms": "PSA", "Psalm": "PSA",
+    "Proverbs": "PRO", "Ecclesiastes": "ECC", "Song of Solomon": "SNG",
+    "Song of Songs": "SNG", "Isaiah": "ISA", "Jeremiah": "JER",
+    "Lamentations": "LAM", "Ezekiel": "EZK", "Daniel": "DAN", "Hosea": "HOS",
+    "Joel": "JOL", "Amos": "AMO", "Obadiah": "OBA", "Jonah": "JON",
+    "Micah": "MIC", "Nahum": "NAM", "Habakkuk": "HAB", "Zephaniah": "ZEP",
+    "Haggai": "HAG", "Zechariah": "ZEC", "Malachi": "MAL",
+
+    # New Testament
+    "Matthew": "MAT", "Mark": "MRK", "Luke": "LUK", "John": "JHN",
+    "Acts": "ACT", "Romans": "ROM", "1 Corinthians": "1CO", "2 Corinthians": "2CO",
+    "Galatians": "GAL", "Ephesians": "EPH", "Philippians": "PHP", "Colossians": "COL",
+    "1 Thessalonians": "1TH", "2 Thessalonians": "2TH", "1 Timothy": "1TI",
+    "2 Timothy": "2TI", "Titus": "TIT", "Philemon": "PHM", "Hebrews": "HEB",
+    "James": "JAS", "1 Peter": "1PE", "2 Peter": "2PE", "1 John": "1JN",
+    "2 John": "2JN", "3 John": "3JN", "Jude": "JUD", "Revelation": "REV"
+}
+
 DATE_RE = re.compile(
     rf"^(?:{'|'.join(MONTHS)})\s+\d{{1,2}}(?:,\s*\d{{4}})?",
     re.MULTILINE,
@@ -79,19 +103,29 @@ def load_pdf_text(pdf_path: str, mtime: float) -> str:
     return "\n\n".join(pages)
 
 
-def split_entries(text: str) -> list[tuple[str, str]]:
-    matches = list(DATE_RE.finditer(text))
-    if not matches:
-        return []
+def generate_youversion_link(passage_string, version_id=111):
+    # Split the string (e.g., "Mark 10:1-31" -> ["Mark", "10:1-31"])
+    parts = passage_string.split(' ', 1)
+    book_name = parts[0]
+    reference = parts[1]
+    
+    # Get the abbreviation
+    abbr = BIBLE_MAP.get(book_name, book_name[:3].upper())
+    
+    # Clean the reference (YouVersion uses '.' for chapters and '-' for ranges)
+    # Example: 10:1-31 becomes 10.1-31
+    clean_ref = reference.replace(':', '.')
+    
+    return f"[{passage_string}](https://www.bible.com/bible/{version_id}/{abbr}.{clean_ref})"
 
-    entries = []
-    for idx, match in enumerate(matches):
-        start = match.start()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-        entry = text[start:end].strip()
-        header = match.group(0).strip()
-        entries.append((header, entry))
-    return entries
+
+def generate_verse_links(verses):
+    split_verses = verses.split(",")
+    links = []
+    for v in split_verses:
+        v = v.strip()
+        links.append(generate_youversion_link(v))
+    return ",".join(links)
 
 
 def find_entry_for_date(entries: list[tuple[str, str]], target_date: datetime) -> str:
@@ -165,11 +199,16 @@ def extract_from_json(json_path: str, target_date: datetime) -> str:
         return ""
     if isinstance(entry, str):
         return entry
-    return format_devotional_entry(entry)
+    return format_devotional_entry(entry, target_date)
 
 
-def format_devotional_entry(entry: dict) -> str:
+def format_devotional_entry(entry: dict, target_date: datetime) -> str:
     parts = []
+
+    formatted_date_string = target_date.strftime("%b %d, %Y (%a)")
+    parts.append(
+      f"🗓️ Today's Devotional \\- _{escape_markdown_v2(formatted_date_string)}_"
+    )
 
     header = entry.get("header")
     if header:
@@ -180,8 +219,9 @@ def format_devotional_entry(entry: dict) -> str:
         parts.append(f"*{escape_markdown_v2(str(date_topic).strip())}*")
 
     verses = entry.get("verses")
+    hyperlinked_verses = generate_verse_links(verses)
     if verses:
-        parts.append(f"_{escape_markdown_v2(str(verses).strip())}_")
+        parts.append(f"*📖 Scripture*\n\n_{escape_markdown_v2(str(hyperlinked_verses).strip())}_")
 
     body = entry.get("body")
     if body:
@@ -189,7 +229,7 @@ def format_devotional_entry(entry: dict) -> str:
 
     prayer = entry.get("prayer")
     if prayer:
-        parts.append(f"*PRAYER*\n{escape_markdown_v2(str(prayer).strip())}")
+        parts.append(f"*🙏🏼 Prayer*\n\n{escape_markdown_v2(str(prayer).strip())}")
 
     return "\n\n".join(parts).strip()
 
