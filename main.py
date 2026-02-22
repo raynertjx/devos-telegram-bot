@@ -1,4 +1,3 @@
-import html
 import json
 import os
 import re
@@ -134,10 +133,12 @@ def chunk_text(text: str, max_len: int = 3800) -> list[str]:
 def extract_devotional_for_date(cfg: dict, target_date: datetime) -> str:
     json_path = cfg.get("json_path")
     if not json_path or not os.path.exists(json_path):
-        return "Devotional JSON not found. Please upload or set DEVOTIONAL_JSON."
+        return escape_markdown_v2(
+            "Devotional JSON not found. Please upload or set DEVOTIONAL_JSON."
+        )
 
     text = extract_from_json(json_path, target_date)
-    return text or "Devotional not found for today."
+    return text or escape_markdown_v2("Devotional not found for today.")
 
 
 @lru_cache(maxsize=2)
@@ -157,13 +158,48 @@ def extract_from_json(json_path: str, target_date: datetime) -> str:
         return ""
     mtime = os.path.getmtime(json_path)
     devotionals = load_devotionals_json(json_path, mtime)
-    key = target_date.strftime("%d-%m-%Y")
-    return devotionals.get(key, "")
+    key_iso = target_date.strftime("%Y-%m-%d")
+    key_dmy = target_date.strftime("%d-%m-%Y")
+    entry = devotionals.get(key_iso) or devotionals.get(key_dmy)
+    if not entry:
+        return ""
+    if isinstance(entry, str):
+        return entry
+    return format_devotional_entry(entry)
 
 
-def to_html_pre(text: str) -> str:
-    escaped = html.escape(text)
-    return f"<pre>{escaped}</pre>"
+def format_devotional_entry(entry: dict) -> str:
+    parts = []
+
+    header = entry.get("header")
+    if header:
+        parts.append(f"*{escape_markdown_v2(str(header).strip())}*")
+
+    date_topic = entry.get("date_topic")
+    if date_topic:
+        parts.append(f"*{escape_markdown_v2(str(date_topic).strip())}*")
+
+    verses = entry.get("verses")
+    if verses:
+        parts.append(f"_{escape_markdown_v2(str(verses).strip())}_")
+
+    body = entry.get("body")
+    if body:
+        parts.append(escape_markdown_v2(str(body).strip()))
+
+    prayer = entry.get("prayer")
+    if prayer:
+        parts.append(f"*PRAYER*\n{escape_markdown_v2(str(prayer).strip())}")
+
+    return "\n\n".join(parts).strip()
+
+
+def escape_markdown_v2(text: str) -> str:
+    return re.sub(r"([_*\[\]()~`>#+\-=|{}.!])", r"\\\1", text)
+
+
+def to_markdown(text: str) -> str:
+    return text
 
 
 def init_db(cfg: dict) -> None:
@@ -245,8 +281,8 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
-                    text=to_html_pre(chunk),
-                    parse_mode=ParseMode.HTML,
+                    text=to_markdown(chunk),
+                    parse_mode=ParseMode.MARKDOWN_V2,
                     disable_web_page_preview=True,
                 )
             except Exception:
@@ -280,8 +316,8 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     for chunk in chunk_text(text):
         await update.message.reply_text(
-            text=to_html_pre(chunk),
-            parse_mode=ParseMode.HTML,
+            text=to_markdown(chunk),
+            parse_mode=ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
         )
 
