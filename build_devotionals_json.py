@@ -28,6 +28,7 @@ DATE_RE = re.compile(
 )
 DATE_TOPIC_RE = re.compile(r"^\d{1,2}\s+[A-Za-z]+\s*:.*$")
 VERSE_RE = re.compile(r"[A-Za-z]+\s+\d")
+HEADER_FOOTER_RE = re.compile(r"^BIBLE IN A YEAR DEVOTIONAL", re.IGNORECASE)
 
 
 @lru_cache(maxsize=4)
@@ -91,20 +92,21 @@ def categorize_paragraphs(paragraphs: list[str]) -> dict:
             continue
 
         if date_topic is not None and date_topic_lines < 3 and verses is None:
-            # Allow a second line for the date/topic before verses begin.
-            if not VERSE_RE.search(para) and not para.isupper():
-                date_topic = f"{date_topic}\n{para}"
-                date_topic_lines += 1
-                date_topic_needs_next = False
-                continue
+            # Allow up to 3 lines for the date/topic before verses begin.
             if date_topic_needs_next:
                 # Force-capture the next line as topic if date line ends with ":"
                 date_topic = f"{date_topic}\n{para}"
                 date_topic_lines += 1
                 date_topic_needs_next = False
                 continue
+            if not VERSE_RE.search(para):
+                date_topic = f"{date_topic}\n{para}"
+                date_topic_lines += 1
+                continue
 
         if verses is None and VERSE_RE.search(para) and ("," in para or ":" in para):
+            if HEADER_FOOTER_RE.search(para):
+                continue
             verses = para
             continue
 
@@ -213,7 +215,7 @@ def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
             skipped += 1
             skipped_dates.append(devo_dict["date_topic"])
             continue
-        if parsed_date < datetime.now():
+        if parsed_date.date() < datetime.now().date():
             print("in the past, skip")
             continue
         parsed_date_string = parsed_date.strftime('%d-%m-%Y')

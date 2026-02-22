@@ -131,18 +131,13 @@ def chunk_text(text: str, max_len: int = 3800) -> list[str]:
     return chunks
 
 
-def extract_devotional_for_date(pdf_path: str, target_date: datetime) -> str:
-    if not os.path.exists(pdf_path):
-        return "Devotional PDF not found. Please upload or set DEVOTIONAL_PDF."
+def extract_devotional_for_date(cfg: dict, target_date: datetime) -> str:
+    json_path = cfg.get("json_path")
+    if not json_path or not os.path.exists(json_path):
+        return "Devotional JSON not found. Please upload or set DEVOTIONAL_JSON."
 
-    mtime = os.path.getmtime(pdf_path)
-    combined = load_pdf_text(pdf_path, mtime)
-    if not combined:
-        return "Devotional PDF appears empty or unreadable."
-
-    entries = split_entries(combined)
-    entry = find_entry_for_date(entries, target_date)
-    return entry or "Devotional not found for today."
+    text = extract_from_json(json_path, target_date)
+    return text or "Devotional not found for today."
 
 
 @lru_cache(maxsize=2)
@@ -162,7 +157,7 @@ def extract_from_json(json_path: str, target_date: datetime) -> str:
         return ""
     mtime = os.path.getmtime(json_path)
     devotionals = load_devotionals_json(json_path, mtime)
-    key = target_date.strftime("%Y-%m-%d")
+    key = target_date.strftime("%d-%m-%Y")
     return devotionals.get(key, "")
 
 
@@ -239,7 +234,7 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
     now = datetime.now(tz)
     text = extract_from_json(cfg["json_path"], now)
     if not text:
-        text = extract_devotional_for_date(cfg["pdf_path"], now)
+        text = extract_devotional_for_date(cfg, now)
 
     chat_ids = list_subscribers(cfg)
     if not chat_ids and cfg["chat_id"]:
@@ -281,7 +276,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     now = datetime.now(tz)
     text = extract_from_json(cfg["json_path"], now)
     if not text:
-        text = extract_devotional_for_date(cfg["pdf_path"], now)
+        text = extract_devotional_for_date(cfg, now)
 
     for chunk in chunk_text(text):
         await update.message.reply_text(
