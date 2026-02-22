@@ -104,19 +104,22 @@ def load_pdf_text(pdf_path: str, mtime: float) -> str:
 
 
 def generate_youversion_link(passage_string, version_id=111):
-    # Split the string (e.g., "Mark 10:1-31" -> ["Mark", "10:1-31"])
     parts = passage_string.split(' ', 1)
     book_name = parts[0]
     reference = parts[1]
     
-    # Get the abbreviation
     abbr = BIBLE_MAP.get(book_name, book_name[:3].upper())
-    
-    # Clean the reference (YouVersion uses '.' for chapters and '-' for ranges)
-    # Example: 10:1-31 becomes 10.1-31
     clean_ref = reference.replace(':', '.')
     
-    return f"[{passage_string}](https://www.bible.com/bible/{version_id}/{abbr}.{clean_ref})"
+    # The URL itself
+    url = f"https://www.bible.com/bible/{version_id}/{abbr}.{clean_ref}"
+    
+    # Escape the LABEL and the URL separately
+    safe_passage = escape_markdown_v2(passage_string)
+    safe_url = escape_markdown_v2(url)
+    
+    # Return the formatted link WITHOUT escaping the [] and () structure again
+    return f"[{safe_passage}]({safe_url})"
 
 
 def generate_verse_links(verses):
@@ -125,7 +128,7 @@ def generate_verse_links(verses):
     for v in split_verses:
         v = v.strip()
         links.append(generate_youversion_link(v))
-    return ",".join(links)
+    return links
 
 
 def find_entry_for_date(entries: list[tuple[str, str]], target_date: datetime) -> str:
@@ -219,9 +222,9 @@ def format_devotional_entry(entry: dict, target_date: datetime) -> str:
         parts.append(f"*{escape_markdown_v2(str(date_topic).strip())}*")
 
     verses = entry.get("verses")
-    hyperlinked_verses = generate_verse_links(verses)
+    verses_string = ", ".join(generate_verse_links(verses))
     if verses:
-        parts.append(f"*📖 Scripture*\n\n_{escape_markdown_v2(str(hyperlinked_verses).strip())}_")
+        parts.append(f"*📖 Scripture*\n\n{verses_string}")
 
     body = entry.get("body")
     if body:
