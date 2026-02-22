@@ -102,33 +102,47 @@ def load_pdf_text(pdf_path: str, mtime: float) -> str:
 
     return "\n\n".join(pages)
 
+def escape_md_url(url: str) -> str:
+    return url.replace("\\", "\\\\").replace(")", "\\)")
+
+def md_link(text: str, url: str) -> str:
+    return f"[{escape_markdown_v2(text)}]({escape_md_url(url)})"
 
 def generate_youversion_link(passage_string, version_id=111):
-    parts = passage_string.split(' ', 1)
+    parts = passage_string.split(" ", 1)
     book_name = parts[0]
-    reference = parts[1]
-    
+    reference = parts[1] if len(parts) > 1 else ""
+
     abbr = BIBLE_MAP.get(book_name, book_name[:3].upper())
-    clean_ref = reference.replace(':', '.')
-    
-    # The URL itself
-    url = f"https://www.bible.com/bible/{version_id}/{abbr}.{clean_ref}"
-    
-    # Escape the LABEL and the URL separately
-    safe_passage = escape_markdown_v2(passage_string)
-    safe_url = escape_markdown_v2(url)
-    
-    # Return the formatted link WITHOUT escaping the [] and () structure again
-    return f"[{safe_passage}]({safe_url})"
+
+    # Split pure chapter range like "12-13" into separate links
+    if reference and ":" not in reference and "-" in reference:
+        start_end = reference.split("-", 1)
+        if len(start_end) == 2 and start_end[0].isdigit() and start_end[1].isdigit():
+            start = int(start_end[0])
+            end = int(start_end[1])
+            links = []
+            for chapter in range(start, end + 1):
+                url = f"https://www.bible.com/bible/{version_id}/{abbr}.{chapter}"
+                label = f"{book_name} {chapter}"
+                links.append(md_link(label, url))
+            return links
+
+    clean_ref = reference.replace(":", ".") if reference else ""
+    url = f"https://www.bible.com/bible/{version_id}/{abbr}" + (f".{clean_ref}" if clean_ref else "")
+    return md_link(passage_string, url)
 
 
 def generate_verse_links(verses):
-    split_verses = verses.split(",")
+    split_verses = [v.strip() for v in verses.split(",") if v.strip()]
     links = []
     for v in split_verses:
-        v = v.strip()
-        links.append(generate_youversion_link(v))
-    return links
+        link = generate_youversion_link(v)
+        if isinstance(link, list):
+            links.extend(link)
+        else:
+            links.append(link)
+    return ", ".join(links)
 
 
 def find_entry_for_date(entries: list[tuple[str, str]], target_date: datetime) -> str:
@@ -209,9 +223,8 @@ def format_devotional_entry(entry: dict, target_date: datetime) -> str:
     parts = []
 
     formatted_date_string = target_date.strftime("%b %d, %Y (%a)")
-    parts.append(
-      f"🗓️ Today's Devotional \\- _{escape_markdown_v2(formatted_date_string)}_"
-    )
+    top_line = f"🗓️ Today's Devotional - {formatted_date_string}"
+    parts.append(f"*{escape_markdown_v2(top_line)}*")
 
     header = entry.get("header")
     if header:
@@ -222,9 +235,9 @@ def format_devotional_entry(entry: dict, target_date: datetime) -> str:
         parts.append(f"*{escape_markdown_v2(str(date_topic).strip())}*")
 
     verses = entry.get("verses")
-    verses_string = ", ".join(generate_verse_links(verses))
     if verses:
-        parts.append(f"*📖 Scripture*\n\n{verses_string}")
+        verses_string = generate_verse_links(verses)
+        parts.append(f"*{escape_markdown_v2('📖 Scripture')}*\n\n{verses_string}")
 
     body = entry.get("body")
     if body:
@@ -232,7 +245,7 @@ def format_devotional_entry(entry: dict, target_date: datetime) -> str:
 
     prayer = entry.get("prayer")
     if prayer:
-        parts.append(f"*🙏🏼 Prayer*\n\n{escape_markdown_v2(str(prayer).strip())}")
+        parts.append(f"*{escape_markdown_v2('🙏🏼 Prayer')}*\n\n{escape_markdown_v2(str(prayer).strip())}")
 
     return "\n\n".join(parts).strip()
 
