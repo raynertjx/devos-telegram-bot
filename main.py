@@ -167,6 +167,10 @@ def load_config() -> dict:
     admin_ids = [
         int(part.strip()) for part in admin_ids_raw.split(",") if part.strip().isdigit()
     ]
+    tz = ZoneInfo(timezone)
+    # run_daily uses UTC when time is naive; pass aware time so 07:00 = 07:00 SGT
+    # send_time_aware = dtime(hour=hour, minute=minute, tzinfo=tz)
+    send_time_aware = dtime(hour=7, minute=30, tzinfo=tz)
 
     return {
         "token": token,
@@ -174,7 +178,7 @@ def load_config() -> dict:
         "pdf_path": pdf_path,
         "feedback_url": feedback_url,
         "json_path": json_path,
-        "send_time": dtime(hour=hour, minute=minute),
+        "send_time": send_time_aware,
         "timezone": timezone,
         "admin_ids": set(admin_ids),
         "db_path": os.getenv("SUBSCRIBERS_DB", "./subscribers.sqlite3"),
@@ -393,7 +397,9 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
                     parse_mode=ParseMode.MARKDOWN_V2,
                     disable_web_page_preview=True,
                 )
-            except Exception:
+            except Exception as e:
+                print(f"[send_devotional] Failed to send to chat_id={chat_id}: {e}")
+                traceback.print_exc()
                 continue
 
 
