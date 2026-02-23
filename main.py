@@ -1,8 +1,7 @@
 import json
 import os
 import re
-import sqlite3
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
@@ -11,6 +10,26 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
+from db import (
+    init_db,
+    list_subscribers,
+    list_subscribers_full,
+    remove_subscriber,
+    upsert_subscriber,
+)
+
+DISCLAIMER_TEXT = (
+    "⚠️ *DISCLAIMER*\n\n"
+    "Hi\\, I'm *Rayner*\\! I created this Telegram bot to make accessing these "
+    "daily devotionals more convenient for everyone\\.\n\n"
+    "The content is referenced from the digital PDF available on the "
+    "*Lighthouse Evangelism* "
+    "[website](https://lighthouse\\.org\\.sg/devotional\\-volume\\-1/)\\. "
+    "Please note that I have *not modified* the devotional content in any way whatsoever\\.\n\n"
+    "If you have any feedback or find any issues with the bot\\, feel free to reach out to me directly "
+    "at @raynertjx\\. I'd love to hear from you\\!\n\n"
+    "_This bot is a personal project and is not an official publication of Lighthouse Evangelism\\._"
+)
 
 MONTHS = (
     "January",
@@ -222,8 +241,15 @@ def extract_from_json(json_path: str, target_date: datetime) -> str:
 def format_devotional_entry(entry: dict, target_date: datetime) -> str:
     parts = []
 
+    day_word = "Today"
+    now = datetime.now(target_date.tzinfo) if target_date.tzinfo else datetime.now()
+    if target_date.date() < now.date():
+        day_word = "Yesterday"
+    elif target_date.date() > now.date():
+        day_word = "Tomorrow"
+
     formatted_date_string = target_date.strftime("%b %d, %Y (%a)")
-    top_line = f"🗓️ Today's Devotional - {formatted_date_string}"
+    top_line = f"🗓️ {day_word}'s Devotional - {formatted_date_string}"
     parts.append(f"*{escape_markdown_v2(top_line)}*")
 
     header = entry.get("header")
@@ -258,61 +284,6 @@ def to_markdown(text: str) -> str:
     return text
 
 
-def init_db(cfg: dict) -> None:
-    with sqlite3.connect(cfg["db_path"]) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS subscribers (
-                chat_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                chat_type TEXT,
-                created_at TEXT
-            )
-            """
-        )
-        conn.commit()
-
-
-def upsert_subscriber(cfg: dict, update: Update) -> None:
-    chat = update.effective_chat
-    user = update.effective_user
-    if not chat or not user:
-        return
-    with sqlite3.connect(cfg["db_path"]) as conn:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO subscribers
-            (chat_id, username, first_name, last_name, chat_type, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                chat.id,
-                user.username,
-                user.first_name,
-                user.last_name,
-                chat.type,
-                datetime.utcnow().isoformat(),
-            ),
-        )
-        conn.commit()
-
-
-def remove_subscriber(cfg: dict, update: Update) -> bool:
-    chat = update.effective_chat
-    if not chat:
-        return False
-    with sqlite3.connect(cfg["db_path"]) as conn:
-        cur = conn.execute("DELETE FROM subscribers WHERE chat_id = ?", (chat.id,))
-        conn.commit()
-        return cur.rowcount > 0
-
-
-def list_subscribers(cfg: dict) -> list[int]:
-    with sqlite3.connect(cfg["db_path"]) as conn:
-        rows = conn.execute("SELECT chat_id FROM subscribers").fetchall()
-    return [row[0] for row in rows]
 
 
 def is_admin(cfg: dict, update: Update) -> bool:
@@ -328,7 +299,7 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not text:
         text = extract_devotional_for_date(cfg, now)
 
-    chat_ids = list_subscribers(cfg)
+    chat_ids = list_subscribers(cfg["db_path"])
     if not chat_ids and cfg["chat_id"]:
         chat_ids = [cfg["chat_id"]]
 
@@ -345,21 +316,45 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
                 continue
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
-    upsert_subscriber(cfg, update)
+    upsert_subscriber(cfg["db_path"], update)
+    user_first_name = update._effective_user.first_name
+    welcome_text = (
+        f"Hello {user_first_name}, you're subscribed\\! ✨\n\n"
+        f"You'll receive daily devotionals here from "
+        f"Lighthouse Evangelism's *Bible In A Year* "
+        f"every morning at *0700hrs \\(SGT\\)*\\.\n\n"
+        f"Here are some commands to get started:\n"
+        f"\\- /today \\- get today's material\n"
+        f"\\- /yesterday \\- get yesterday's material\n"
+        f"\\- /tomorrow \\- get tomorrow's material\n"
+        f"\\- /bible \\- change bible version\n"
+        f"\\- /unsubscribe \\- unsubscribe from daily devotionals\n\n"
+        f"God bless\\! 🙏\n"
+    )
+
+    await update.message.reply_text(text=welcome_text, parse_mode='MarkdownV2')
     await update.message.reply_text(
-        "You're subscribed! You'll receive daily devotionals here from Lighthouse Evangelism's Bible In A Year Devotional, at 0700hrs (SGT)."
+        text=DISCLAIMER_TEXT,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True
     )
 
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
-    removed = remove_subscriber(cfg, update)
+    removed = remove_subscriber(cfg["db_path"], update)
     if removed:
-        await update.message.reply_text("Unsubscribed. You will no longer receive messages.")
+        await update.message.reply_text(
+            "Unsubscribed\\. You will no longer receive the daily devotionals\\.",
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
     else:
-        await update.message.reply_text("You're not subscribed.")
+        await update.message.reply_text(
+            "You're not subscribed\\.",
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
 
 
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -369,6 +364,37 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = extract_from_json(cfg["json_path"], now)
     if not text:
         text = extract_devotional_for_date(cfg, now)
+
+    for chunk in chunk_text(text):
+        await update.message.reply_text(
+            text=to_markdown(chunk),
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+async def yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    tz = ZoneInfo(cfg["timezone"])
+    yesterday_date = datetime.now(tz) - timedelta(days=1)
+    text = extract_from_json(cfg["json_path"], yesterday_date)
+    if not text:
+        text = extract_devotional_for_date(cfg, yesterday_date)
+
+    for chunk in chunk_text(text):
+        await update.message.reply_text(
+            text=to_markdown(chunk),
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+        
+async def tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    tz = ZoneInfo(cfg["timezone"])
+    tomorrow_date = datetime.now(tz) + timedelta(days=1)
+    text = extract_from_json(cfg["json_path"], tomorrow_date)
+    if not text:
+        text = extract_devotional_for_date(cfg, tomorrow_date)
 
     for chunk in chunk_text(text):
         await update.message.reply_text(
@@ -388,6 +414,28 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    upsert_subscriber(cfg["db_path"], update)
+    user_first_name = update._effective_user.first_name
+    text = (
+        f"Hello {user_first_name}, here are some commands to get you started:\\\n\n"
+        f"\\- /today \\- get today's material\n"
+        f"\\- /yesterday \\- get yesterday's material\n"
+        f"\\- /tomorrow \\- get tomorrow's material\n"
+        f"\\- /bible \\- change bible version\n"
+        f"\\- /subscribe \\- start receiving daily devotionals\n"
+        f"\\- /unsubscribe \\- stop receiving daily devotionals"
+    )
+    await update.message.reply_text(text=text, parse_mode='MarkdownV2')
+
+
+async def disclaimer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    upsert_subscriber(cfg["db_path"], update)
+    await update.message.reply_text(text=DISCLAIMER_TEXT, parse_mode='MarkdownV2')
+
+
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     if not is_admin(cfg, update):
@@ -399,7 +447,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     message = " ".join(context.args)
-    chat_ids = list_subscribers(cfg)
+    chat_ids = list_subscribers(cfg["db_path"])
     sent = 0
     for chat_id in chat_ids:
         try:
@@ -414,18 +462,58 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Broadcast sent to {sent} subscribers.")
 
 
+async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    if not is_admin(cfg, update):
+        message = update.effective_message
+        if message:
+            await message.reply_text("Unauthorized.")
+        return
+
+    rows = list_subscribers_full(cfg["db_path"])
+    if not rows:
+        message = update.effective_message
+        if message:
+            await message.reply_text("No subscribers.")
+        return
+
+    lines = []
+    for chat_id, username, first_name, bible_version, created_at in rows:
+        handle = f"@{username}" if username else "-"
+        line = f"{chat_id} | {handle} | {first_name} | {bible_version} | {created_at}"
+        lines.append(escape_markdown_v2(line))
+
+    text = "*Subscribers*\n" + "\n".join(lines)
+    message = update.effective_message
+    if not message:
+        return
+    for chunk in chunk_text(text, max_len=3500):
+        await message.reply_text(
+            text=chunk,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+
 def main() -> None:
     cfg = load_config()
-    init_db(cfg)
+    init_db(cfg["db_path"])
 
     app = Application.builder().token(cfg["token"]).build()
     app.bot_data["cfg"] = cfg
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("subscribe", subscribe))
+    app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CommandHandler("today", today))
-    app.add_handler(CommandHandler("whoami", whoami))
+    app.add_handler(CommandHandler("yesterday", yesterday))
+    app.add_handler(CommandHandler("tomorrow", tomorrow))
+    app.add_handler(CommandHandler("help", help))
+    app.add_handler(CommandHandler("disclaimer", disclaimer))
+    # app.add_handler(CommandHandler("whoami", whoami))
+
+    # admin functions
     app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("subscribers", subscribers))
 
     tz = ZoneInfo(cfg["timezone"])
     app.job_queue.run_daily(

@@ -215,8 +215,9 @@ def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
             skipped += 1
             skipped_dates.append(devo_dict["date_topic"])
             continue
-        if parsed_date.date() < datetime.now().date():
-            print("in the past, skip")
+        cutoff = datetime(2026, 2, 22).date()
+        if parsed_date.date() < cutoff:
+            print("before 22 Feb 2026, skip")
             continue
         parsed_date_string = parsed_date.strftime('%d-%m-%Y')
         devotionals[parsed_date_string] = devo_dict
