@@ -340,7 +340,9 @@ def format_devotional_entry(entry: dict, target_date: datetime, version_id: int)
     if verses:
         verses_string = generate_verse_links(verses, version_id)
         version_code = VERSION_ID_TO_CODE[version_id]
-        parts.append(f"*{escape_markdown_v2(f'📖 Scripture ({version_code})')}*\n\n{verses_string}")
+        parts.append(
+            f"*{escape_markdown_v2(f'📖 Scripture ({version_code})')}*\n\n{verses_string}"
+        )
 
     body = entry.get("body")
     if body:
@@ -394,7 +396,25 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
+    chat = update.effective_chat
+    already = False
+    if chat:
+        existing = list_subscribers(cfg["db_path"])
+        already = chat.id in existing
+    if already:
+        await update.message.reply_text(
+            "You're already subscribed\\! You will receieve the daily devotionals every morning at *0700hrs \\(SGT\\)*\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
     upsert_subscriber(cfg["db_path"], update, bible_version=111)
+
+    await update.message.reply_text(
+        text=DISCLAIMER_TEXT,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True,
+    )
+
     user_first_name = update._effective_user.first_name
     welcome_text = (
         f"Hello {user_first_name}, you're subscribed\\! ✨\n\n"
@@ -407,15 +427,11 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"\\- /tomorrow \\- get tomorrow's material\n"
         f"\\- /bible \\- change bible version\n"
         f"\\- /unsubscribe \\- unsubscribe from daily devotionals\n\n"
-        f"God bless\\! 🙏\n"
+        f"Here's today's devotional to get you started\\. God bless\\! 🙏\n"
     )
 
     await update.message.reply_text(text=welcome_text, parse_mode="MarkdownV2")
-    await update.message.reply_text(
-        text=DISCLAIMER_TEXT,
-        parse_mode=ParseMode.MARKDOWN_V2,
-        disable_web_page_preview=True,
-    )
+    await today(update, context)
 
 
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
