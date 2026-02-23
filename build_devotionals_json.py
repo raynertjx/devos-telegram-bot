@@ -5,7 +5,6 @@ from datetime import datetime, date
 from functools import lru_cache
 from typing import Optional
 import fitz
-import pprint
 
 MONTHS = (
     "January",
@@ -50,9 +49,6 @@ def load_pdf_text(pdf_path: str, mtime: float) -> list[list[str]]:
                     # skip header note, which is i == 1
                     if paragraph_idx == 1:
                         continue
-
-                    print(f"--- Paragraph {paragraph_idx}---")
-                    print(paragraph_text)
 
                     split_paragraphs.append(paragraph_text)
         
@@ -129,7 +125,6 @@ def split_entries(pages: list[list[str]]) -> list[tuple[str, str]]:
     entries = []
     for page in pages:
         categorised_dict = categorize_paragraphs(page)
-        pprint.pprint(categorised_dict)
         entries.append(categorised_dict)
 
     return entries
@@ -196,9 +191,6 @@ def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
 
     mtime = os.path.getmtime(pdf_path)
     meta = load_existing_meta(json_path)
-    # if meta.get("source_mtime") == mtime:
-    #     print("No changes in PDF; JSON is up to date.")
-    #     return
 
     combined = load_pdf_text(pdf_path, mtime)
     if not combined:
@@ -217,12 +209,10 @@ def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
             continue
         cutoff = datetime(2026, 2, 22).date()
         if parsed_date.date() < cutoff:
-            print("before 22 Feb 2026, skip")
             continue
         parsed_date_string = parsed_date.strftime('%d-%m-%Y')
         devotionals[parsed_date_string] = devo_dict
 
-    print(devotionals)
     payload = {
         "_meta": {
             "source_pdf": pdf_path,
@@ -239,7 +229,6 @@ def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
     print(f"Wrote {len(devotionals)} entries to {json_path} (skipped {skipped}).")
-    print(skipped_dates)
 
 
 def main() -> None:
