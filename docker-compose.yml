@@ -7,5 +7,4 @@ services:
       - .env
     volumes:
       - ./bible-in-a-year-2026-volume-1-2.pdf:/app/bible-in-a-year-2026-volume-1-2.pdf:ro
-      - ./subscribers.sqlite3:/app/subscribers.sqlite3
-      - ./devotionals.json:/app/devotionals.json
+      - ./data:/app/data
