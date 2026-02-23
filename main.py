@@ -726,6 +726,7 @@ def main() -> None:
     app.add_handler(CommandHandler("tomorrow", tomorrow))
     app.add_handler(CommandHandler("bible", bible))
     app.add_handler(CommandHandler("subscribe", subscribe))
+    app.add_handler(CommandHandler("start", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CallbackQueryHandler(bible_callback, pattern=r"^bible:"))
     app.add_handler(CommandHandler("feedback", feedback))
