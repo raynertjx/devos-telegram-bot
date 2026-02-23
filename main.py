@@ -9,7 +9,7 @@ import fitz
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from db import (
     init_db,
     list_subscribers,
@@ -414,6 +414,21 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    text = (
+        "Sorry\\, I don't understand that command\\. Try these commands instead\\:\\\n\n"
+        f"\\- /today \\- get today's material\n"
+        f"\\- /yesterday \\- get yesterday's material\n"
+        f"\\- /tomorrow \\- get tomorrow's material\n"
+        f"\\- /bible \\- change bible version\n"
+        f"\\- /subscribe \\- start receiving daily devotionals\n"
+        f"\\- /unsubscribe \\- stop receiving daily devotionals"
+    )
+    await update.message.reply_text(text=text, parse_mode='MarkdownV2')
+
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     upsert_subscriber(cfg["db_path"], update)
@@ -514,14 +529,13 @@ def main() -> None:
     # admin functions
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("subscribers", subscribers))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-    tz = ZoneInfo(cfg["timezone"])
     app.job_queue.run_daily(
         send_devotional,
         time=cfg["send_time"],
         days=(0, 1, 2, 3, 4, 5, 6),
         name="daily-devotional",
-        # timezone=tz,
     )
 
     app.run_polling(close_loop=False)
