@@ -1,6 +1,8 @@
 import json
 import os
 import re
+import traceback
+import httpx
 from datetime import datetime, time as dtime, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -9,7 +11,13 @@ import fitz
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from db import (
     init_db,
     list_subscribers,
@@ -48,26 +56,75 @@ MONTHS = (
 
 BIBLE_MAP = {
     # Old Testament
-    "Genesis": "GEN", "Exodus": "EXO", "Leviticus": "LEV", "Numbers": "NUM",
-    "Deuteronomy": "DEU", "Joshua": "JOS", "Judges": "JDG", "Ruth": "RUT",
-    "1 Samuel": "1SA", "2 Samuel": "2SA", "1 Kings": "1KI", "2 Kings": "2KI",
-    "1 Chronicles": "1CH", "2 Chronicles": "2CH", "Ezra": "EZR", "Nehemiah": "NEH",
-    "Esther": "EST", "Job": "JOB", "Psalms": "PSA", "Psalm": "PSA",
-    "Proverbs": "PRO", "Ecclesiastes": "ECC", "Song of Solomon": "SNG",
-    "Song of Songs": "SNG", "Isaiah": "ISA", "Jeremiah": "JER",
-    "Lamentations": "LAM", "Ezekiel": "EZK", "Daniel": "DAN", "Hosea": "HOS",
-    "Joel": "JOL", "Amos": "AMO", "Obadiah": "OBA", "Jonah": "JON",
-    "Micah": "MIC", "Nahum": "NAM", "Habakkuk": "HAB", "Zephaniah": "ZEP",
-    "Haggai": "HAG", "Zechariah": "ZEC", "Malachi": "MAL",
-
+    "Genesis": "GEN",
+    "Exodus": "EXO",
+    "Leviticus": "LEV",
+    "Numbers": "NUM",
+    "Deuteronomy": "DEU",
+    "Joshua": "JOS",
+    "Judges": "JDG",
+    "Ruth": "RUT",
+    "1 Samuel": "1SA",
+    "2 Samuel": "2SA",
+    "1 Kings": "1KI",
+    "2 Kings": "2KI",
+    "1 Chronicles": "1CH",
+    "2 Chronicles": "2CH",
+    "Ezra": "EZR",
+    "Nehemiah": "NEH",
+    "Esther": "EST",
+    "Job": "JOB",
+    "Psalms": "PSA",
+    "Psalm": "PSA",
+    "Proverbs": "PRO",
+    "Ecclesiastes": "ECC",
+    "Song of Solomon": "SNG",
+    "Song of Songs": "SNG",
+    "Isaiah": "ISA",
+    "Jeremiah": "JER",
+    "Lamentations": "LAM",
+    "Ezekiel": "EZK",
+    "Daniel": "DAN",
+    "Hosea": "HOS",
+    "Joel": "JOL",
+    "Amos": "AMO",
+    "Obadiah": "OBA",
+    "Jonah": "JON",
+    "Micah": "MIC",
+    "Nahum": "NAM",
+    "Habakkuk": "HAB",
+    "Zephaniah": "ZEP",
+    "Haggai": "HAG",
+    "Zechariah": "ZEC",
+    "Malachi": "MAL",
     # New Testament
-    "Matthew": "MAT", "Mark": "MRK", "Luke": "LUK", "John": "JHN",
-    "Acts": "ACT", "Romans": "ROM", "1 Corinthians": "1CO", "2 Corinthians": "2CO",
-    "Galatians": "GAL", "Ephesians": "EPH", "Philippians": "PHP", "Colossians": "COL",
-    "1 Thessalonians": "1TH", "2 Thessalonians": "2TH", "1 Timothy": "1TI",
-    "2 Timothy": "2TI", "Titus": "TIT", "Philemon": "PHM", "Hebrews": "HEB",
-    "James": "JAS", "1 Peter": "1PE", "2 Peter": "2PE", "1 John": "1JN",
-    "2 John": "2JN", "3 John": "3JN", "Jude": "JUD", "Revelation": "REV"
+    "Matthew": "MAT",
+    "Mark": "MRK",
+    "Luke": "LUK",
+    "John": "JHN",
+    "Acts": "ACT",
+    "Romans": "ROM",
+    "1 Corinthians": "1CO",
+    "2 Corinthians": "2CO",
+    "Galatians": "GAL",
+    "Ephesians": "EPH",
+    "Philippians": "PHP",
+    "Colossians": "COL",
+    "1 Thessalonians": "1TH",
+    "2 Thessalonians": "2TH",
+    "1 Timothy": "1TI",
+    "2 Timothy": "2TI",
+    "Titus": "TIT",
+    "Philemon": "PHM",
+    "Hebrews": "HEB",
+    "James": "JAS",
+    "1 Peter": "1PE",
+    "2 Peter": "2PE",
+    "1 John": "1JN",
+    "2 John": "2JN",
+    "3 John": "3JN",
+    "Jude": "JUD",
+    "Revelation": "REV",
 }
 
 DATE_RE = re.compile(
@@ -80,6 +137,7 @@ def load_config() -> dict:
     load_dotenv()
     token = os.getenv("BOT_TOKEN")
     chat_id = os.getenv("CHAT_ID")
+    feedback_url = os.getenv("FEEDBACK_URL")
     pdf_path = os.getenv("DEVOTIONAL_PDF", "./bible-in-a-year-2026-volume-1-2.pdf")
     json_path = os.getenv("DEVOTIONAL_JSON", "./devotionals.json")
     send_time = os.getenv("SEND_TIME", "07:00")
@@ -91,15 +149,14 @@ def load_config() -> dict:
 
     hour, minute = [int(p) for p in send_time.split(":", 1)]
     admin_ids = [
-        int(part.strip())
-        for part in admin_ids_raw.split(",")
-        if part.strip().isdigit()
+        int(part.strip()) for part in admin_ids_raw.split(",") if part.strip().isdigit()
     ]
 
     return {
         "token": token,
         "chat_id": int(chat_id) if chat_id else None,
         "pdf_path": pdf_path,
+        "feedback_url": feedback_url,
         "json_path": json_path,
         "send_time": dtime(hour=hour, minute=minute),
         "timezone": timezone,
@@ -121,11 +178,14 @@ def load_pdf_text(pdf_path: str, mtime: float) -> str:
 
     return "\n\n".join(pages)
 
+
 def escape_md_url(url: str) -> str:
     return url.replace("\\", "\\\\").replace(")", "\\)")
 
+
 def md_link(text: str, url: str) -> str:
     return f"[{escape_markdown_v2(text)}]({escape_md_url(url)})"
+
 
 def generate_youversion_link(passage_string, version_id=111):
     parts = passage_string.split(" ", 1)
@@ -148,7 +208,9 @@ def generate_youversion_link(passage_string, version_id=111):
             return links
 
     clean_ref = reference.replace(":", ".") if reference else ""
-    url = f"https://www.bible.com/bible/{version_id}/{abbr}" + (f".{clean_ref}" if clean_ref else "")
+    url = f"https://www.bible.com/bible/{version_id}/{abbr}" + (
+        f".{clean_ref}" if clean_ref else ""
+    )
     return md_link(passage_string, url)
 
 
@@ -271,7 +333,9 @@ def format_devotional_entry(entry: dict, target_date: datetime) -> str:
 
     prayer = entry.get("prayer")
     if prayer:
-        parts.append(f"*{escape_markdown_v2('🙏🏼 Prayer')}*\n\n{escape_markdown_v2(str(prayer).strip())}")
+        parts.append(
+            f"*{escape_markdown_v2('🙏🏼 Prayer')}*\n\n{escape_markdown_v2(str(prayer).strip())}"
+        )
 
     return "\n\n".join(parts).strip()
 
@@ -282,8 +346,6 @@ def escape_markdown_v2(text: str) -> str:
 
 def to_markdown(text: str) -> str:
     return text
-
-
 
 
 def is_admin(cfg: dict, update: Update) -> bool:
@@ -334,11 +396,11 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"God bless\\! 🙏\n"
     )
 
-    await update.message.reply_text(text=welcome_text, parse_mode='MarkdownV2')
+    await update.message.reply_text(text=welcome_text, parse_mode="MarkdownV2")
     await update.message.reply_text(
         text=DISCLAIMER_TEXT,
         parse_mode=ParseMode.MARKDOWN_V2,
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
 
 
@@ -348,12 +410,11 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if removed:
         await update.message.reply_text(
             "Unsubscribed\\. You will no longer receive the daily devotionals\\.",
-            parse_mode=ParseMode.MARKDOWN_V2
+            parse_mode=ParseMode.MARKDOWN_V2,
         )
     else:
         await update.message.reply_text(
-            "You're not subscribed\\.",
-            parse_mode=ParseMode.MARKDOWN_V2
+            "You're not subscribed\\.", parse_mode=ParseMode.MARKDOWN_V2
         )
 
 
@@ -372,6 +433,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
 
+
 async def yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
@@ -387,7 +449,7 @@ async def yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             disable_web_page_preview=True,
         )
 
-        
+
 async def tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
@@ -427,7 +489,8 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"\\- /subscribe \\- start receiving daily devotionals\n"
         f"\\- /unsubscribe \\- stop receiving daily devotionals"
     )
-    await update.message.reply_text(text=text, parse_mode='MarkdownV2')
+    await update.message.reply_text(text=text, parse_mode="MarkdownV2")
+
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
@@ -442,13 +505,13 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"\\- /subscribe \\- start receiving daily devotionals\n"
         f"\\- /unsubscribe \\- stop receiving daily devotionals"
     )
-    await update.message.reply_text(text=text, parse_mode='MarkdownV2')
+    await update.message.reply_text(text=text, parse_mode="MarkdownV2")
 
 
 async def disclaimer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     upsert_subscriber(cfg["db_path"], update)
-    await update.message.reply_text(text=DISCLAIMER_TEXT, parse_mode='MarkdownV2')
+    await update.message.reply_text(text=DISCLAIMER_TEXT, parse_mode="MarkdownV2")
 
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -510,6 +573,54 @@ async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    user = update.effective_user
+
+    if not context.args:
+        await update.message.reply_text(
+            "Please include your feedback after the command\\.\nExample: `/feedback This bot is great\\!`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    feedback_msg = " ".join(context.args)
+    url = cfg.get("feedback_url")
+
+    if not url:
+        await update.message.reply_text(
+            "Feedback system is currently offline\\.", parse_mode=ParseMode.MARKDOWN_V2
+        )
+        return
+
+    # Send to Google Sheets via HTTP POST
+    async with httpx.AsyncClient() as client:
+        payload = {
+            "chat_id": user.id,
+            "username": f"@{user.username}" if user.username else user.first_name,
+            "message": feedback_msg,
+        }
+        try:
+            response = await client.post(url, json=payload, follow_redirects=True)
+            print(response)
+            if response.status_code == 200:
+                await update.message.reply_text(
+                    "Thank you for your feedback\\! I'll take a look at it\\. 🙏 \n\n\\-Rayner",
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            else:
+                await update.message.reply_text(
+                    "Failed to send feedback\\. Please try again later\\.",
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+        except Exception as e:
+            traceback.print_exc()
+            await update.message.reply_text(
+                "An error occurred while sending feedback\\.",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+
+
 def main() -> None:
     cfg = load_config()
     init_db(cfg["db_path"])
@@ -522,8 +633,9 @@ def main() -> None:
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("yesterday", yesterday))
     app.add_handler(CommandHandler("tomorrow", tomorrow))
-    app.add_handler(CommandHandler("help", help))
+    app.add_handler(CommandHandler("feedback", feedback))
     app.add_handler(CommandHandler("disclaimer", disclaimer))
+    app.add_handler(CommandHandler("help", help))
     # app.add_handler(CommandHandler("whoami", whoami))
 
     # admin functions
