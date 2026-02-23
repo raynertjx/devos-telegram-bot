@@ -9,20 +9,24 @@ from zoneinfo import ZoneInfo
 
 import fitz
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 from db import (
+    get_bible_version,
     init_db,
     list_subscribers,
     list_subscribers_full,
+    list_subscribers_with_versions,
     remove_subscriber,
+    set_bible_version,
     upsert_subscriber,
 )
 
@@ -33,9 +37,9 @@ DISCLAIMER_TEXT = (
     "The content is referenced from the digital PDF available on the "
     "*Lighthouse Evangelism* "
     "[website](https://lighthouse\\.org\\.sg/devotional\\-volume\\-1/)\\. "
-    "Please note that I have *not modified* the devotional content in any way whatsoever\\.\n\n"
-    "If you have any feedback or find any issues with the bot\\, feel free to reach out to me directly "
-    "at @raynertjx\\. I'd love to hear from you\\!\n\n"
+    "Please note that I have *NOT MODIFIED* the devotional content in any way whatsoever\\.\n\n"
+    "If you have any feedback or find any issues with the bot\\, feel free to use the "
+    "/feedback command\\. I'd love to hear from you\\!\n\n"
     "_This bot is a personal project and is not an official publication of Lighthouse Evangelism\\._"
 )
 
@@ -127,6 +131,18 @@ BIBLE_MAP = {
     "Revelation": "REV",
 }
 
+BIBLE_VERSIONS = {
+    "NIV": 111,
+    "ESV": 59,
+    "KJV": 1,
+    "NKJV": 114,
+    "NASB": 100,
+    "NLT": 116,
+    "AMP": 1588,
+}
+
+VERSION_ID_TO_CODE = {v: k for k, v in BIBLE_VERSIONS.items()}
+
 DATE_RE = re.compile(
     rf"^(?:{'|'.join(MONTHS)})\s+\d{{1,2}}(?:,\s*\d{{4}})?",
     re.MULTILINE,
@@ -214,11 +230,11 @@ def generate_youversion_link(passage_string, version_id=111):
     return md_link(passage_string, url)
 
 
-def generate_verse_links(verses):
+def generate_verse_links(verses, version_id: int):
     split_verses = [v.strip() for v in verses.split(",") if v.strip()]
     links = []
     for v in split_verses:
-        link = generate_youversion_link(v)
+        link = generate_youversion_link(v, version_id=version_id)
         if isinstance(link, list):
             links.extend(link)
         else:
@@ -268,9 +284,7 @@ def extract_devotional_for_date(cfg: dict, target_date: datetime) -> str:
         return escape_markdown_v2(
             "Devotional JSON not found. Please upload or set DEVOTIONAL_JSON."
         )
-
-    text = extract_from_json(json_path, target_date)
-    return text or escape_markdown_v2("Devotional not found for today.")
+    return escape_markdown_v2("Devotional not found for today.")
 
 
 @lru_cache(maxsize=2)
@@ -285,7 +299,7 @@ def load_devotionals_json(json_path: str, mtime: float) -> dict:
         return {}
 
 
-def extract_from_json(json_path: str, target_date: datetime) -> str:
+def extract_from_json(json_path: str, target_date: datetime, version_id: int) -> str:
     if not os.path.exists(json_path):
         return ""
     mtime = os.path.getmtime(json_path)
@@ -297,10 +311,10 @@ def extract_from_json(json_path: str, target_date: datetime) -> str:
         return ""
     if isinstance(entry, str):
         return entry
-    return format_devotional_entry(entry, target_date)
+    return format_devotional_entry(entry, target_date, version_id)
 
 
-def format_devotional_entry(entry: dict, target_date: datetime) -> str:
+def format_devotional_entry(entry: dict, target_date: datetime, version_id: int) -> str:
     parts = []
 
     day_word = "Today"
@@ -324,8 +338,9 @@ def format_devotional_entry(entry: dict, target_date: datetime) -> str:
 
     verses = entry.get("verses")
     if verses:
-        verses_string = generate_verse_links(verses)
-        parts.append(f"*{escape_markdown_v2('📖 Scripture')}*\n\n{verses_string}")
+        verses_string = generate_verse_links(verses, version_id)
+        version_code = VERSION_ID_TO_CODE[version_id]
+        parts.append(f"*{escape_markdown_v2(f'📖 Scripture ({version_code})')}*\n\n{verses_string}")
 
     body = entry.get("body")
     if body:
@@ -357,15 +372,14 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
     now = datetime.now(tz)
-    text = extract_from_json(cfg["json_path"], now)
-    if not text:
-        text = extract_devotional_for_date(cfg, now)
+    subscribers = list_subscribers_with_versions(cfg["db_path"])
+    if not subscribers and cfg["chat_id"]:
+        subscribers = [(cfg["chat_id"], 111)]
 
-    chat_ids = list_subscribers(cfg["db_path"])
-    if not chat_ids and cfg["chat_id"]:
-        chat_ids = [cfg["chat_id"]]
-
-    for chat_id in chat_ids:
+    for chat_id, version_id in subscribers:
+        text = extract_from_json(cfg["json_path"], now, version_id)
+        if not text:
+            text = extract_devotional_for_date(cfg, now)
         for chunk in chunk_text(text):
             try:
                 await context.bot.send_message(
@@ -380,7 +394,7 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
-    upsert_subscriber(cfg["db_path"], update)
+    upsert_subscriber(cfg["db_path"], update, bible_version=111)
     user_first_name = update._effective_user.first_name
     welcome_text = (
         f"Hello {user_first_name}, you're subscribed\\! ✨\n\n"
@@ -422,7 +436,9 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
     now = datetime.now(tz)
-    text = extract_from_json(cfg["json_path"], now)
+    chat = update.effective_chat
+    version_id = get_bible_version(cfg["db_path"], chat.id) if chat else 111
+    text = extract_from_json(cfg["json_path"], now, version_id)
     if not text:
         text = extract_devotional_for_date(cfg, now)
 
@@ -438,7 +454,9 @@ async def yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
     yesterday_date = datetime.now(tz) - timedelta(days=1)
-    text = extract_from_json(cfg["json_path"], yesterday_date)
+    chat = update.effective_chat
+    version_id = get_bible_version(cfg["db_path"], chat.id) if chat else 111
+    text = extract_from_json(cfg["json_path"], yesterday_date, version_id)
     if not text:
         text = extract_devotional_for_date(cfg, yesterday_date)
 
@@ -454,7 +472,9 @@ async def tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     tz = ZoneInfo(cfg["timezone"])
     tomorrow_date = datetime.now(tz) + timedelta(days=1)
-    text = extract_from_json(cfg["json_path"], tomorrow_date)
+    chat = update.effective_chat
+    version_id = get_bible_version(cfg["db_path"], chat.id) if chat else 111
+    text = extract_from_json(cfg["json_path"], tomorrow_date, version_id)
     if not text:
         text = extract_devotional_for_date(cfg, tomorrow_date)
 
@@ -492,9 +512,65 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(text=text, parse_mode="MarkdownV2")
 
 
+async def bible(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if not message:
+        return
+    user_first_name = update._effective_user.first_name
+    cfg = context.application.bot_data["cfg"]
+    if not context.args:
+        rows = []
+        for code in sorted(BIBLE_VERSIONS.keys()):
+            rows.append([InlineKeyboardButton(code, callback_data=f"bible:{code}")])
+        keyboard = InlineKeyboardMarkup(rows)
+        await message.reply_text(
+            f"Hello {user_first_name}! Please select your preferred Bible version from the list below:",
+            reply_markup=keyboard,
+        )
+        return
+
+    choice = context.args[0].upper()
+    if choice not in BIBLE_VERSIONS:
+        options = ", ".join(sorted(BIBLE_VERSIONS.keys()))
+        await message.reply_text(
+            f"Unknown version. Options: {options}",
+        )
+        return
+
+    chat = update.effective_chat
+    if not chat:
+        return
+    version_id = BIBLE_VERSIONS[choice]
+    set_bible_version(cfg["db_path"], chat.id, version_id)
+    await message.reply_text(
+        f"Bible version set to {choice}!",
+    )
+
+
+async def bible_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    cfg = context.application.bot_data["cfg"]
+    data = query.data or ""
+    if not data.startswith("bible:"):
+        return
+    choice = data.split(":", 1)[1].upper()
+    if choice not in BIBLE_VERSIONS:
+        await query.edit_message_text("Unknown version.")
+        return
+    chat = query.message.chat if query.message else None
+    if not chat:
+        return
+    version_id = BIBLE_VERSIONS[choice]
+    set_bible_version(cfg["db_path"], chat.id, version_id)
+    await query.edit_message_text(f"Bible version set to {choice}.")
+
+
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
-    upsert_subscriber(cfg["db_path"], update)
+    upsert_subscriber(cfg["db_path"], update, bible_version=111)
     user_first_name = update._effective_user.first_name
     text = (
         f"Hello {user_first_name}, here are some commands to get you started:\\\n\n"
@@ -510,7 +586,7 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def disclaimer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
-    upsert_subscriber(cfg["db_path"], update)
+    upsert_subscriber(cfg["db_path"], update, bible_version=111)
     await update.message.reply_text(text=DISCLAIMER_TEXT, parse_mode="MarkdownV2")
 
 
@@ -558,7 +634,8 @@ async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     lines = []
     for chat_id, username, first_name, bible_version, created_at in rows:
         handle = f"@{username}" if username else "-"
-        line = f"{chat_id} | {handle} | {first_name} | {bible_version} | {created_at}"
+        version_code = VERSION_ID_TO_CODE.get(int(bible_version), str(bible_version))
+        line = f"{chat_id} | {handle} | {first_name} | {version_code} | {created_at}"
         lines.append(escape_markdown_v2(line))
 
     text = "*Subscribers*\n" + "\n".join(lines)
@@ -628,11 +705,13 @@ def main() -> None:
     app = Application.builder().token(cfg["token"]).build()
     app.bot_data["cfg"] = cfg
 
-    app.add_handler(CommandHandler("subscribe", subscribe))
-    app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("yesterday", yesterday))
     app.add_handler(CommandHandler("tomorrow", tomorrow))
+    app.add_handler(CommandHandler("bible", bible))
+    app.add_handler(CommandHandler("subscribe", subscribe))
+    app.add_handler(CommandHandler("unsubscribe", unsubscribe))
+    app.add_handler(CallbackQueryHandler(bible_callback, pattern=r"^bible:"))
     app.add_handler(CommandHandler("feedback", feedback))
     app.add_handler(CommandHandler("disclaimer", disclaimer))
     app.add_handler(CommandHandler("help", help))
