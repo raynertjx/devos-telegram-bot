@@ -168,9 +168,10 @@ def load_config() -> dict:
         int(part.strip()) for part in admin_ids_raw.split(",") if part.strip().isdigit()
     ]
     tz = ZoneInfo(timezone)
-    # run_daily uses UTC when time is naive; pass aware time so 07:00 = 07:00 SGT
     # send_time_aware = dtime(hour=hour, minute=minute, tzinfo=tz)
-    send_time_aware = dtime(hour=7, minute=30, tzinfo=tz)
+    # run_daily uses UTC when time is naive; pass aware time so 07:00 = 07:00 SGT
+    # SENDS DEVOTIONALS at 0700hrs SGT daily
+    send_time_aware = dtime(hour=7, minute=0, tzinfo=tz)
 
     return {
         "token": token,
