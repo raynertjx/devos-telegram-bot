@@ -116,6 +116,9 @@ def categorize_paragraphs(paragraphs: list[str]) -> dict:
     if body:
         body = re.sub(r"(?<!\n)\n(?!\n)", "", body).strip()
 
+    if prayer:
+        prayer = re.sub(r"\s*\n\s*", " ", prayer).strip()
+
     return {
         "header": header,
         "date_topic": date_topic,
