@@ -357,9 +357,8 @@ def format_devotional_entry(entry: dict, target_date: datetime, version_id: int)
 
     prayer = entry.get("prayer")
     if prayer:
-        cleaned_prayer = str(prayer).strip().replace("\n", "")
         parts.append(
-            f"*{escape_markdown_v2('🙏🏼 Prayer')}*\n\n{escape_markdown_v2(cleaned_prayer)}"
+            f"*{escape_markdown_v2('🙏🏼 Prayer')}*\n\n{escape_markdown_v2(prayer)}"
         )
 
     return "\n\n".join(parts).strip()
