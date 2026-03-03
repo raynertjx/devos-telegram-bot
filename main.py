@@ -32,7 +32,7 @@ from db import (
 
 DISCLAIMER_TEXT = (
     "⚠️ *DISCLAIMER*\n\n"
-    "This Telegram bot to make accessing these "
+    "This Telegram bot was developed to make accessing these "
     "daily devotionals more convenient for everyone\\.\n\n"
     "The content is referenced from the digital PDF available on the "
     "*Lighthouse Evangelism* "
@@ -707,7 +707,7 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             print(response)
             if response.status_code == 200:
                 await update.message.reply_text(
-                    "Thank you for your feedback\\! I'll take a look at it\\. 😄",
+                    "Thank you for your feedback\\! The developer will take a look at it\\. 😄",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
             else:
