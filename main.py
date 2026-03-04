@@ -30,6 +30,8 @@ from db import (
     upsert_subscriber,
 )
 
+LOG_CHAT_ID = -5250672666
+
 DISCLAIMER_TEXT = (
     "⚠️ *DISCLAIMER*\n\n"
     "This Telegram bot was developed to make accessing these "
@@ -161,6 +163,7 @@ def load_config() -> dict:
     send_time = os.getenv("SEND_TIME", "07:00")
     timezone = os.getenv("TIMEZONE", "Asia/Singapore")
     admin_ids_raw = os.getenv("ADMIN_IDS", "349988134")
+    log_group_id = int(os.getenv("LOG_GROUP_ID", str(LOG_GROUP_ID)))
 
     if not token:
         raise RuntimeError("BOT_TOKEN is required")
@@ -185,6 +188,7 @@ def load_config() -> dict:
         "timezone": timezone,
         "admin_ids": set(admin_ids),
         "db_path": os.getenv("SUBSCRIBERS_DB", "./subscribers.sqlite3"),
+        "log_group_id": log_group_id,
     }
 
 
@@ -645,6 +649,40 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Broadcast sent to {sent} subscribers.")
 
 
+async def send_subscriber_list_to_chat(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int
+) -> None:
+    """Build the subscriber list and send it to the given chat_id."""
+    cfg = context.application.bot_data["cfg"]
+    rows = list_subscribers_full(cfg["db_path"])
+    if not rows:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=escape_markdown_v2("No subscribers."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+    lines = []
+    for cid, username, first_name, bible_version, created_at in rows:
+        handle = f"@{username}" if username else "-"
+        version_code = VERSION_ID_TO_CODE.get(int(bible_version), str(bible_version))
+        line = f"{cid} | {handle} | {first_name} | {version_code} | {created_at}"
+        lines.append(escape_markdown_v2(line))
+    subscribers_count = len(rows)
+    text = (
+        f"*TOTAL SUBSCRIBERS: {subscribers_count}*\n\n"
+        + "*Subscribers*\n"
+        + "\n".join(lines)
+    )
+    for chunk in chunk_text(text, max_len=3500):
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=chunk,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+
 async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     if not is_admin(cfg, update):
@@ -652,32 +690,15 @@ async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if message:
             await message.reply_text("Unauthorized.")
         return
-
-    rows = list_subscribers_full(cfg["db_path"])
-    if not rows:
-        message = update.effective_message
-        if message:
-            await message.reply_text("No subscribers.")
-        return
-
-    lines = []
-    for chat_id, username, first_name, bible_version, created_at in rows:
-        handle = f"@{username}" if username else "-"
-        version_code = VERSION_ID_TO_CODE.get(int(bible_version), str(bible_version))
-        line = f"{chat_id} | {handle} | {first_name} | {version_code} | {created_at}"
-        lines.append(escape_markdown_v2(line))
-
-    subscribers_count = len(rows)
-    text = f"*TOTAL SUBSCRIBERS: {subscribers_count}*\n\n" + "*Subscribers*\n" + "\n".join(lines)
     message = update.effective_message
     if not message:
         return
-    for chunk in chunk_text(text, max_len=3500):
-        await message.reply_text(
-            text=chunk,
-            parse_mode=ParseMode.MARKDOWN_V2,
-            disable_web_page_preview=True,
-        )
+    await send_subscriber_list_to_chat(context, message.chat.id)
+
+
+async def send_logs(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the subscriber list to LOG_CHAT_ID (same content as /subscribers)."""
+    await send_subscriber_list_to_chat(context, LOG_CHAT_ID)
 
 
 async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -773,6 +794,12 @@ def main() -> None:
         time=cfg["send_time"],
         days=(0, 1, 2, 3, 4, 5, 6),
         name="daily-devotional",
+    )
+    app.job_queue.run_repeating(
+        send_logs,
+        interval=60 * 60,
+        first=10,
+        name="hourly-subscriber-logs",
     )
 
     app.run_polling(close_loop=False)
