@@ -148,6 +148,7 @@ DATE_RE = re.compile(
     re.MULTILINE,
 )
 
+LOG_GROUP_ID = -5250672666
 
 def load_config() -> dict:
     load_dotenv()
@@ -710,6 +711,21 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     "Thank you for your feedback\\! The developer will take a look at it\\. 😄",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
+
+                log_message = (
+                    f"📩 **New Feedback\\!**\n"
+                    f"From: {user.first_name} \\(@{user.username}\\)\n"
+                    f"ID: `{user.id}`\n\n"
+                    f"Message: {feedback_msg}"
+                )
+
+                # send feedback to logs group
+                await context.bot.send_message(
+                    chat_id=LOG_GROUP_ID,
+                    text=log_message,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+
             else:
                 await update.message.reply_text(
                     "Failed to send feedback\\. Please try again later\\.",
