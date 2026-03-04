@@ -3,6 +3,7 @@ import os
 import re
 import traceback
 import httpx
+from wcwidth import wcswidth
 from datetime import datetime, time as dtime, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -378,12 +379,25 @@ def to_markdown(text: str) -> str:
     return text
 
 
-def _truncate(text: str, max_len: int) -> str:
-    if len(text) <= max_len:
+def _display_width(text: str) -> int:
+    width = wcswidth(text)
+    return width if width >= 0 else len(text)
+
+
+def _truncate(text: str, max_width: int) -> str:
+    if _display_width(text) <= max_width:
         return text
-    if max_len <= 1:
-        return text[:max_len]
-    return text[: max_len - 1] + "…"
+    if max_width <= 1:
+        return text[:max_width]
+    out = []
+    width = 0
+    for ch in text:
+        ch_w = _display_width(ch)
+        if width + ch_w >= max_width:
+            break
+        out.append(ch)
+        width += ch_w
+    return "".join(out) + "…"
 
 
 def format_subscribers_table(rows: list[tuple]) -> list[str]:
@@ -403,12 +417,19 @@ def format_subscribers_table(rows: list[tuple]) -> list[str]:
         )
 
     widths = [
-        max(len(headers[i]), max((len(r[i]) for r in data), default=0))
+        max(
+            _display_width(headers[i]),
+            max((_display_width(r[i]) for r in data), default=0),
+        )
         for i in range(len(headers))
     ]
 
     def fmt_row(cols: list[str]) -> str:
-        return " | ".join(col.ljust(widths[i]) for i, col in enumerate(cols))
+        padded = []
+        for i, col in enumerate(cols):
+            pad = widths[i] - _display_width(col)
+            padded.append(col + (" " * max(pad, 0)))
+        return " | ".join(padded)
 
     lines = [fmt_row(headers), "-+-".join("-" * w for w in widths)]
     lines.extend(fmt_row(r) for r in data)
