@@ -667,7 +667,8 @@ async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         line = f"{chat_id} | {handle} | {first_name} | {version_code} | {created_at}"
         lines.append(escape_markdown_v2(line))
 
-    text = "*Subscribers*\n" + "\n".join(lines)
+    subscribers_count = len(rows)
+    text = f"*TOTAL SUBSCRIBERS: {subscribers_count}*\n\n" + "*Subscribers*\n" + "\n".join(lines)
     message = update.effective_message
     if not message:
         return
