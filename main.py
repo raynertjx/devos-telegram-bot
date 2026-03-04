@@ -149,6 +149,7 @@ DATE_RE = re.compile(
 )
 
 LOG_GROUP_ID = -5250672666
+TO_IGNORE_CHAT_IDS = set([LOG_GROUP_ID])
 
 def load_config() -> dict:
     load_dotenv()
@@ -387,6 +388,8 @@ async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
         subscribers = [(cfg["chat_id"], 111)]
 
     for chat_id, version_id in subscribers:
+        if chat_id in TO_IGNORE_CHAT_IDS:
+            continue
         text = extract_from_json(cfg["json_path"], now, version_id)
         if not text:
             text = extract_devotional_for_date(cfg, now)
