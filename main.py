@@ -798,7 +798,7 @@ def main() -> None:
     tz = ZoneInfo(cfg["timezone"])
     log_times = (
         dtime(hour=8, minute=0, tzinfo=tz),
-        dtime(hour=13, minute=0, tzinfo=tz),
+        dtime(hour=14, minute=0, tzinfo=tz),
         dtime(hour=20, minute=0, tzinfo=tz),
     )
     for idx, t in enumerate(log_times, start=1):
