@@ -378,6 +378,61 @@ def to_markdown(text: str) -> str:
     return text
 
 
+def _truncate(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    if max_len <= 1:
+        return text[:max_len]
+    return text[: max_len - 1] + "…"
+
+
+def format_subscribers_table(rows: list[tuple]) -> list[str]:
+    headers = ["Chat ID", "Username", "Name", "Bible Version"]
+    data = []
+    for cid, username, first_name, bible_version, created_at in rows:
+        handle = f"@{username}" if username else "-"
+        version_code = VERSION_ID_TO_CODE.get(int(bible_version), str(bible_version))
+        name = first_name or "-"
+        data.append(
+            [
+                str(cid),
+                _truncate(handle, 16),
+                _truncate(name, 16),
+                _truncate(version_code, 14),
+            ]
+        )
+
+    widths = [
+        max(len(headers[i]), max((len(r[i]) for r in data), default=0))
+        for i in range(len(headers))
+    ]
+
+    def fmt_row(cols: list[str]) -> str:
+        return " | ".join(col.ljust(widths[i]) for i, col in enumerate(cols))
+
+    lines = [fmt_row(headers), "-+-".join("-" * w for w in widths)]
+    lines.extend(fmt_row(r) for r in data)
+
+    total = f"*TOTAL SUBSCRIBERS:* `{len(rows)}`\n"
+    chunks = []
+    current = [total, "```", lines[0], lines[1]]
+    current_len = sum(len(x) + 1 for x in current)
+
+    for line in lines[2:]:
+        if current_len + len(line) + 4 > 3500:
+            current.append("```")
+            chunks.append("\n".join(current))
+            current = [total, "```", lines[0], lines[1], line]
+            current_len = sum(len(x) + 1 for x in current)
+        else:
+            current.append(line)
+            current_len += len(line) + 1
+
+    current.append("```")
+    chunks.append("\n".join(current))
+    return chunks
+
+
 def is_admin(cfg: dict, update: Update) -> bool:
     user = update.effective_user
     return bool(user and user.id in cfg["admin_ids"])
@@ -662,19 +717,8 @@ async def send_subscriber_list_to_chat(
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
-    lines = []
-    for cid, username, first_name, bible_version, created_at in rows:
-        handle = f"@{username}" if username else "-"
-        version_code = VERSION_ID_TO_CODE.get(int(bible_version), str(bible_version))
-        line = f"{cid} | {handle} | {first_name} | {version_code} | {created_at}"
-        lines.append(escape_markdown_v2(line))
-    subscribers_count = len(rows)
-    text = (
-        f"*TOTAL SUBSCRIBERS: {subscribers_count}*\n\n"
-        + "*Subscribers*\n"
-        + "\n".join(lines)
-    )
-    for chunk in chunk_text(text, max_len=3500):
+    chunks = format_subscribers_table(rows)
+    for chunk in chunks:
         await context.bot.send_message(
             chat_id=chat_id,
             text=chunk,
