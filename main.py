@@ -795,12 +795,19 @@ def main() -> None:
         days=(0, 1, 2, 3, 4, 5, 6),
         name="daily-devotional",
     )
-    app.job_queue.run_repeating(
-        send_logs,
-        interval=60 * 60,
-        first=10,
-        name="hourly-subscriber-logs",
+    tz = ZoneInfo(cfg["timezone"])
+    log_times = (
+        dtime(hour=8, minute=0, tzinfo=tz),
+        dtime(hour=13, minute=0, tzinfo=tz),
+        dtime(hour=20, minute=0, tzinfo=tz),
     )
+    for idx, t in enumerate(log_times, start=1):
+        app.job_queue.run_daily(
+            send_logs,
+            time=t,
+            days=(0, 1, 2, 3, 4, 5, 6),
+            name=f"subscriber-logs-{idx}",
+        )
 
     app.run_polling(close_loop=False)
 
