@@ -1,10 +1,14 @@
 import asyncio
-from datetime import time as dtime
+from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
 
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
-from bot_handlers import register_handlers, register_jobs
+from bot_handlers import (
+    register_handlers,
+    register_jobs,
+    seconds_until_next_ten_minute_boundary,
+)
 
 
 def build_application() -> Application:
@@ -70,3 +74,15 @@ def test_register_jobs_wires_daily_devotional_and_log_jobs() -> None:
         "subscriber-logs-2",
         "subscriber-logs-3",
     ]
+
+
+def test_seconds_until_next_ten_minute_boundary_from_offset_time() -> None:
+    now = datetime(2026, 3, 17, 7, 3, 15)
+
+    assert seconds_until_next_ten_minute_boundary(now) == 405.0
+
+
+def test_seconds_until_next_ten_minute_boundary_from_exact_boundary() -> None:
+    now = datetime(2026, 3, 17, 7, 10, 0)
+
+    assert seconds_until_next_ten_minute_boundary(now) == 0.0

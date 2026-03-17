@@ -21,13 +21,30 @@ from bot_handlers import (
     unsubscribe,
     yesterday,
 )
-from db import get_bible_version, init_db, list_subscribers, set_bible_version, upsert_subscriber
+from db import (
+    get_bible_version,
+    get_preferred_send_time,
+    init_db,
+    list_subscribers,
+    set_bible_version,
+    set_preferred_send_time,
+    upsert_subscriber,
+)
 
 
 class FixedDatetime:
     @classmethod
     def now(cls, tz=None):
         return datetime(2026, 3, 17, 7, 0, tzinfo=tz)
+
+
+def fixed_datetime_at(hour: int, minute: int):
+    class _FixedDatetime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 3, 17, hour, minute, tzinfo=tz)
+
+    return _FixedDatetime
 
 
 @pytest.fixture
@@ -404,3 +421,39 @@ def test_send_devotional_uses_stored_bible_version(
     assert bot.send_message.await_count >= 1
     sent_text = bot.send_message.await_args.kwargs["text"]
     assert "https://www.bible.com/bible/59/" in sent_text
+
+
+def test_send_devotional_sends_to_subscribers_at_their_configured_times(
+    seeded_cfg, make_user, make_seed_update, make_context, run_async
+) -> None:
+    subscribers = [
+        (101, "one", "One", "07:00"),
+        (102, "two", "Two", "08:00"),
+        (103, "three", "Three", "09:00"),
+        (104, "four", "Four", "10:00"),
+        (105, "five", "Five", "11:00"),
+    ]
+    for user_id, username, first_name, send_time in subscribers:
+        user = make_user(user_id, username, first_name)
+        upsert_subscriber(
+            seeded_cfg["db_path"],
+            make_seed_update(user_id, user),
+            bible_version=111,
+        )
+        set_preferred_send_time(seeded_cfg["db_path"], user_id, send_time)
+        assert get_preferred_send_time(seeded_cfg["db_path"], user_id) == send_time
+
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = make_context(seeded_cfg, bot=bot)
+
+    for expected_chat_id, _username, _first_name, send_time in subscribers:
+        previous_call_count = bot.send_message.await_count
+        hour, minute = (int(part) for part in send_time.split(":", 1))
+
+        with patch("bot_handlers.datetime", fixed_datetime_at(hour, minute)):
+            run_async(send_devotional(context))
+
+        new_calls = bot.send_message.await_args_list[previous_call_count:]
+        assert new_calls
+        assert {call.kwargs["chat_id"] for call in new_calls} == {expected_chat_id}
+        assert any("Today" in call.kwargs["text"] for call in new_calls)
