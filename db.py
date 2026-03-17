@@ -98,6 +98,14 @@ def list_subscribers(db_path: str) -> list[int]:
     return [row[0] for row in rows]
 
 
+def list_subscribers_with_versions(db_path: str) -> list[tuple[int, int]]:
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT chat_id, COALESCE(bible_version, 111) FROM subscribers"
+        ).fetchall()
+    return [(int(row[0]), int(row[1])) for row in rows]
+
+
 def list_subscribers_due_for_time(
     db_path: str, preferred_send_time: str, target_date: str
 ) -> list[tuple[int, int]]:
