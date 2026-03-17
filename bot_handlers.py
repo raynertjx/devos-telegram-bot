@@ -493,26 +493,43 @@ async def disclaimer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
+    message = getattr(update, "effective_message", None)
+    if message is None:
+        message = getattr(update, "message", None)
+    if not message:
+        return
     if not is_admin(cfg, update):
-        await update.message.reply_text("Unauthorized.")
+        await message.reply_text("Unauthorized.")
         return
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
+        await message.reply_text("Usage: /broadcast <message>")
         return
 
-    message = " ".join(context.args)
+    raw_text = getattr(message, "text", "") or ""
+    entities = getattr(message, "entities", None) or []
+    broadcast_text = ""
+    if entities and entities[0].offset == 0 and str(entities[0].type) == "bot_command":
+        broadcast_text = raw_text[entities[0].length :].lstrip()
+    elif raw_text.startswith("/"):
+        broadcast_text = re.sub(r"^/\S+\s*", "", raw_text, count=1)
+    if not broadcast_text:
+        broadcast_text = " ".join(context.args)
+    if not broadcast_text:
+        await message.reply_text("Usage: /broadcast <message>")
+        return
+
     sent = 0
     for chat_id in list_subscribers(cfg["db_path"]):
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=message,
+                text=broadcast_text,
                 disable_web_page_preview=True,
             )
             sent += 1
         except Exception:
             continue
-    await update.message.reply_text(f"Broadcast sent to {sent} subscribers.")
+    await message.reply_text(f"Broadcast sent to {sent} subscribers.")
 
 
 async def send_subscriber_list_to_chat(
