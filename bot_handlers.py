@@ -19,8 +19,10 @@ from bot_formatting import escape_markdown_v2, format_subscribers_table, to_mark
 from db import (
     get_bible_version,
     list_subscribers,
+    list_subscribers_due_for_time,
     list_subscribers_full,
     list_subscribers_with_versions,
+    mark_subscriber_sent,
     remove_subscriber,
     set_bible_version,
     upsert_subscriber,
@@ -33,30 +35,55 @@ def is_admin(cfg: dict, update: Update) -> bool:
     return bool(user and user.id in cfg["admin_ids"])
 
 
+def seconds_until_next_ten_minute_boundary(now: datetime) -> float:
+    next_boundary = now.replace(second=0, microsecond=0)
+    minutes_to_add = 10 - (next_boundary.minute % 10)
+    if minutes_to_add == 10 and now.second == 0 and now.microsecond == 0:
+        minutes_to_add = 0
+    next_boundary = next_boundary + timedelta(minutes=minutes_to_add)
+    return max((next_boundary - now).total_seconds(), 0.0)
+
+
+async def send_devotional_to_chat(
+    context: ContextTypes.DEFAULT_TYPE, cfg: dict, chat_id: int, version_id: int, now: datetime
+) -> None:
+    text = extract_from_json(cfg["json_path"], now, version_id)
+    if not text:
+        text = extract_devotional_for_date(cfg, now)
+
+    for chunk in chunk_text(text):
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=to_markdown(chunk),
+            parse_mode=ParseMode.MARKDOWN_V2,
+            disable_web_page_preview=True,
+        )
+
+
 async def send_devotional(context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
     now = datetime.now(ZoneInfo(cfg["timezone"]))
-    subscribers = list_subscribers_with_versions(cfg["db_path"])
-    if not subscribers and cfg["chat_id"]:
+    target_date = now.date().isoformat()
+    preferred_send_time = now.strftime("%H:%M")
+    subscribers = list_subscribers_due_for_time(
+        cfg["db_path"], preferred_send_time, target_date
+    )
+    if (
+        not subscribers
+        and cfg["chat_id"]
+        and preferred_send_time == cfg["send_time"].strftime("%H:%M")
+    ):
         subscribers = [(cfg["chat_id"], 111)]
 
     for chat_id, version_id in subscribers:
         if chat_id in TO_IGNORE_CHAT_IDS:
             continue
-        text = extract_from_json(cfg["json_path"], now, version_id)
-        if not text:
-            text = extract_devotional_for_date(cfg, now)
-        for chunk in chunk_text(text):
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=to_markdown(chunk),
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                    disable_web_page_preview=True,
-                )
-            except Exception as exc:
-                print(f"[send_devotional] Failed to send to chat_id={chat_id}: {exc}")
-                traceback.print_exc()
+        try:
+            await send_devotional_to_chat(context, cfg, chat_id, version_id, now)
+            mark_subscriber_sent(cfg["db_path"], chat_id, target_date)
+        except Exception as exc:
+            print(f"[send_devotional] Failed to send to chat_id={chat_id}: {exc}")
+            traceback.print_exc()
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -376,13 +403,14 @@ def register_handlers(app: Application) -> None:
 
 
 def register_jobs(app: Application, cfg: dict) -> None:
-    app.job_queue.run_daily(
+    tz = ZoneInfo(cfg["timezone"])
+    first_run_in_seconds = seconds_until_next_ten_minute_boundary(datetime.now(tz))
+    app.job_queue.run_repeating(
         send_devotional,
-        time=cfg["send_time"],
-        days=(0, 1, 2, 3, 4, 5, 6),
+        interval=600,
+        first=first_run_in_seconds,
         name="daily-devotional",
     )
-    tz = ZoneInfo(cfg["timezone"])
     for idx, run_time in enumerate(
         (
             dtime(hour=8, minute=0, tzinfo=tz),
