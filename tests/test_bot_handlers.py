@@ -564,6 +564,56 @@ def test_broadcast_sends_to_all_subscribers_for_admin(
     message.reply_text.assert_awaited_once_with("Broadcast sent to 2 subscribers.")
 
 
+def test_broadcast_preserves_multiline_spacing_for_admin(
+    tmp_path, make_cfg, make_user, make_seed_update, make_message, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, admin_ids={99})
+    init_db(cfg["db_path"])
+    upsert_subscriber(
+        cfg["db_path"],
+        make_seed_update(111, make_user(1, "one", "One")),
+        bible_version=111,
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    message = make_message()
+    message.text = "/broadcast Hello everyone! 🙏\n\nSecond paragraph.\n\nThird paragraph."
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=99), message=message, effective_message=message)
+    context = make_context(cfg, args=["Hello", "everyone!"], bot=bot)
+
+    run_async(broadcast(update, context))
+
+    bot.send_message.assert_awaited_once_with(
+        chat_id=111,
+        text="Hello everyone! 🙏\n\nSecond paragraph.\n\nThird paragraph.",
+        disable_web_page_preview=True,
+    )
+
+
+def test_broadcast_preserves_first_word_when_command_is_followed_by_newline(
+    tmp_path, make_cfg, make_user, make_seed_update, make_message, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, admin_ids={99})
+    init_db(cfg["db_path"])
+    upsert_subscriber(
+        cfg["db_path"],
+        make_seed_update(111, make_user(1, "one", "One")),
+        bible_version=111,
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    message = make_message()
+    message.text = "/broadcast\nHello everyone!\n\nStill formatted."
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=99), message=message, effective_message=message)
+    context = make_context(cfg, args=["Hello", "everyone!"], bot=bot)
+
+    run_async(broadcast(update, context))
+
+    bot.send_message.assert_awaited_once_with(
+        chat_id=111,
+        text="Hello everyone!\n\nStill formatted.",
+        disable_web_page_preview=True,
+    )
+
+
 def test_subscribers_unauthorized_returns_message(
     seeded_cfg, make_message, make_context, run_async
 ) -> None:
