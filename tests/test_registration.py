@@ -35,6 +35,7 @@ def test_register_handlers_wires_expected_commands_and_callbacks() -> None:
             "yesterday",
             "tomorrow",
             "bible",
+            "time",
             "subscribe",
             "start",
             "unsubscribe",
@@ -49,8 +50,11 @@ def test_register_handlers_wires_expected_commands_and_callbacks() -> None:
     callback_handlers = [
         handler for handler in handlers if isinstance(handler, CallbackQueryHandler)
     ]
-    assert len(callback_handlers) == 1
-    assert callback_handlers[0].pattern.pattern == "^bible:"
+    assert sorted(handler.pattern.pattern for handler in callback_handlers) == [
+        "^bible:",
+        "^time(?:hours|:)",
+        "^timehour:",
+    ]
 
     message_handlers = [
         handler for handler in handlers if isinstance(handler, MessageHandler)

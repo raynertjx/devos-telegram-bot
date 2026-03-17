@@ -1,5 +1,6 @@
 import traceback
 from datetime import datetime, time as dtime, timedelta
+import re
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -18,6 +19,7 @@ from bot_constants import BIBLE_VERSIONS, DISCLAIMER_TEXT, LOG_CHAT_ID, TO_IGNOR
 from bot_formatting import escape_markdown_v2, format_subscribers_table, to_markdown
 from db import (
     get_bible_version,
+    get_preferred_send_time,
     list_subscribers,
     list_subscribers_due_for_time,
     list_subscribers_full,
@@ -25,6 +27,7 @@ from db import (
     mark_subscriber_sent,
     remove_subscriber,
     set_bible_version,
+    set_preferred_send_time,
     upsert_subscriber,
 )
 from devotional_service import chunk_text, extract_devotional_for_date, extract_from_json
@@ -42,6 +45,105 @@ def seconds_until_next_ten_minute_boundary(now: datetime) -> float:
         minutes_to_add = 0
     next_boundary = next_boundary + timedelta(minutes=minutes_to_add)
     return max((next_boundary - now).total_seconds(), 0.0)
+
+
+def is_valid_preferred_send_time(value: str) -> bool:
+    if not re.fullmatch(r"\d{2}:\d{2}", value):
+        return False
+    hour, minute = (int(part) for part in value.split(":", 1))
+    return 0 <= hour <= 23 and 0 <= minute <= 59 and minute % 10 == 0
+
+
+def build_bible_keyboard(onboarding: bool = False) -> InlineKeyboardMarkup:
+    suffix = ":onboarding" if onboarding else ""
+    rows = [
+        [InlineKeyboardButton(code, callback_data=f"bible:{code}{suffix}")]
+        for code in sorted(BIBLE_VERSIONS.keys())
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def build_time_hour_keyboard(onboarding: bool = False) -> InlineKeyboardMarkup:
+    suffix = ":onboarding" if onboarding else ""
+    rows = []
+    for start_hour in range(0, 24, 4):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{hour:02d}",
+                    callback_data=f"timehour:{hour:02d}{suffix}",
+                )
+                for hour in range(start_hour, start_hour + 4)
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def build_time_minute_keyboard(hour: int, onboarding: bool = False) -> InlineKeyboardMarkup:
+    suffix = ":onboarding" if onboarding else ""
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{hour:02d}:{minute:02d}",
+                callback_data=f"time:{hour:02d}:{minute:02d}{suffix}",
+            )
+            for minute in range(start_minute, start_minute + 30, 10)
+        ]
+        for start_minute in (0, 30)
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "Back",
+                callback_data=f"timehours{suffix}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+async def send_time_picker(message, current_time: str, onboarding: bool = False) -> None:
+    prompt = (
+        "Choose the time you would like to receive your daily devotional.\n"
+        f"Current time: {current_time}\n"
+        "Times are available in 10-minute intervals."
+    )
+    await message.reply_text(
+        prompt,
+        reply_markup=build_time_hour_keyboard(onboarding=onboarding),
+    )
+
+
+async def send_bible_picker(message, user_first_name: str, onboarding: bool = False) -> None:
+    await message.reply_text(
+        f"Hello {user_first_name}! Please select your preferred Bible version from the list below:",
+        reply_markup=build_bible_keyboard(onboarding=onboarding),
+    )
+
+
+async def complete_subscription_onboarding(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    user = update.effective_user
+    name = user.first_name if user and user.first_name else "there"
+    welcome_text = (
+        f"Hello {name}, you're subscribed\\! ✨\n\n"
+        "You'll receive daily devotionals here from "
+        "Lighthouse Evangelism's *Bible In A Year* "
+        "at your selected time each day\\.\n\n"
+        "Here are some commands to get started:\n"
+        "\\- /today \\- get today's material\n"
+        "\\- /yesterday \\- get yesterday's material\n"
+        "\\- /tomorrow \\- get tomorrow's material\n"
+        "\\- /bible \\- change bible version\n"
+        "\\- /time HH:MM \\- change devotional delivery time\n"
+        "\\- /unsubscribe \\- unsubscribe from daily devotionals\n\n"
+        "Here's today's devotional to get you started\\. God bless\\! 🙏\n"
+    )
+    message = update.effective_message
+    if message:
+        await message.reply_text(text=welcome_text, parse_mode="MarkdownV2")
+    await today(update, context)
 
 
 async def send_devotional_to_chat(
@@ -94,7 +196,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         already = chat.id in list_subscribers(cfg["db_path"])
     if already:
         await update.message.reply_text(
-            "You're already subscribed\\! You will receieve the daily devotionals every morning at *0700hrs \\(SGT\\)*\\.",
+            "You're already subscribed\\! Use /time to update your devotional delivery time or /bible to change your Bible version\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
@@ -106,22 +208,11 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         disable_web_page_preview=True,
     )
 
-    user_first_name = update._effective_user.first_name
-    welcome_text = (
-        f"Hello {user_first_name}, you're subscribed\\! ✨\n\n"
-        "You'll receive daily devotionals here from "
-        "Lighthouse Evangelism's *Bible In A Year* "
-        "every morning at *0700hrs \\(SGT\\)*\\.\n\n"
-        "Here are some commands to get started:\n"
-        "\\- /today \\- get today's material\n"
-        "\\- /yesterday \\- get yesterday's material\n"
-        "\\- /tomorrow \\- get tomorrow's material\n"
-        "\\- /bible \\- change bible version\n"
-        "\\- /unsubscribe \\- unsubscribe from daily devotionals\n\n"
-        "Here's today's devotional to get you started\\. God bless\\! 🙏\n"
+    await send_time_picker(
+        update.message,
+        get_preferred_send_time(cfg["db_path"], chat.id) if chat else "07:00",
+        onboarding=True,
     )
-    await update.message.reply_text(text=welcome_text, parse_mode="MarkdownV2")
-    await today(update, context)
 
 
 async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -188,6 +279,7 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "\\- /yesterday \\- get yesterday's material\n"
         "\\- /tomorrow \\- get tomorrow's material\n"
         "\\- /bible \\- change bible version\n"
+        "\\- /time HH:MM \\- change devotional delivery time\n"
         "\\- /subscribe \\- start receiving daily devotionals\n"
         "\\- /unsubscribe \\- stop receiving daily devotionals"
     )
@@ -201,14 +293,7 @@ async def bible(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_first_name = update._effective_user.first_name
     cfg = context.application.bot_data["cfg"]
     if not context.args:
-        rows = [
-            [InlineKeyboardButton(code, callback_data=f"bible:{code}")]
-            for code in sorted(BIBLE_VERSIONS.keys())
-        ]
-        await message.reply_text(
-            f"Hello {user_first_name}! Please select your preferred Bible version from the list below:",
-            reply_markup=InlineKeyboardMarkup(rows),
-        )
+        await send_bible_picker(message, user_first_name)
         return
 
     choice = context.args[0].upper()
@@ -233,7 +318,9 @@ async def bible_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     data = query.data or ""
     if not data.startswith("bible:"):
         return
-    choice = data.split(":", 1)[1].upper()
+    parts = data.split(":")
+    choice = parts[1].upper()
+    onboarding = len(parts) > 2 and parts[2] == "onboarding"
     if choice not in BIBLE_VERSIONS:
         await query.edit_message_text("Unknown version.")
         return
@@ -243,6 +330,107 @@ async def bible_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     cfg = context.application.bot_data["cfg"]
     set_bible_version(cfg["db_path"], chat.id, BIBLE_VERSIONS[choice])
     await query.edit_message_text(f"Bible version set to {choice}.")
+    if onboarding:
+        await complete_subscription_onboarding(update, context)
+
+
+async def time_hour_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    del context
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    data = query.data or ""
+    if not data.startswith("timehour:"):
+        return
+    parts = data.split(":")
+    hour = int(parts[1])
+    onboarding = len(parts) > 2 and parts[2] == "onboarding"
+    await query.edit_message_text(
+        f"Choose your devotional delivery minute for {hour:02d}.",
+        reply_markup=build_time_minute_keyboard(hour, onboarding=onboarding),
+    )
+
+
+async def time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    data = query.data or ""
+    if data.startswith("timehours"):
+        onboarding = data.endswith(":onboarding")
+        current_time = "07:00"
+        if query.message and query.message.chat:
+            current_time = get_preferred_send_time(
+                context.application.bot_data["cfg"]["db_path"],
+                query.message.chat.id,
+            )
+        await query.edit_message_text(
+            "Choose the time you would like to receive your daily devotional.\n"
+            f"Current time: {current_time}\n"
+            "Times are available in 10-minute intervals.",
+            reply_markup=build_time_hour_keyboard(onboarding=onboarding),
+        )
+        return
+    if not data.startswith("time:"):
+        return
+
+    parts = data.split(":")
+    preferred_send_time = f"{parts[1]}:{parts[2]}"
+    onboarding = len(parts) > 3 and parts[3] == "onboarding"
+    if not is_valid_preferred_send_time(preferred_send_time):
+        await query.edit_message_text("Unknown time.")
+        return
+
+    chat = query.message.chat if query.message else None
+    if not chat:
+        return
+    cfg = context.application.bot_data["cfg"]
+    set_preferred_send_time(cfg["db_path"], chat.id, preferred_send_time)
+    if onboarding:
+        await query.edit_message_text(
+            f"Devotional send time set to {preferred_send_time}."
+        )
+        user = update.effective_user
+        first_name = user.first_name if user and user.first_name else "there"
+        await send_bible_picker(query.message, first_name, onboarding=True)
+        return
+    await query.edit_message_text(
+        f"Devotional send time set to {preferred_send_time}."
+    )
+
+
+async def time_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    if not message or not chat:
+        return
+
+    cfg = context.application.bot_data["cfg"]
+    if not context.args:
+        current_time = get_preferred_send_time(cfg["db_path"], chat.id)
+        await send_time_picker(message, current_time)
+        return
+
+    preferred_send_time = context.args[0]
+    if not is_valid_preferred_send_time(preferred_send_time):
+        await message.reply_text(
+            "Invalid time\\. Use 24-hour `HH:MM` format in 10-minute intervals, for example `/time 08:30`\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    upsert_subscriber(
+        cfg["db_path"],
+        update,
+        bible_version=get_bible_version(cfg["db_path"], chat.id),
+    )
+    set_preferred_send_time(cfg["db_path"], chat.id, preferred_send_time)
+    await message.reply_text(
+        f"Devotional send time set to {preferred_send_time}\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -255,6 +443,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "\\- /yesterday \\- get yesterday's material\n"
         "\\- /tomorrow \\- get tomorrow's material\n"
         "\\- /bible \\- change bible version\n"
+        "\\- /time HH:MM \\- change devotional delivery time\n"
         "\\- /subscribe \\- start receiving daily devotionals\n"
         "\\- /unsubscribe \\- stop receiving daily devotionals"
     )
@@ -390,10 +579,13 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("yesterday", yesterday))
     app.add_handler(CommandHandler("tomorrow", tomorrow))
     app.add_handler(CommandHandler("bible", bible))
+    app.add_handler(CommandHandler("time", time_command))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("start", subscribe))
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CallbackQueryHandler(bible_callback, pattern=r"^bible:"))
+    app.add_handler(CallbackQueryHandler(time_hour_callback, pattern=r"^timehour:"))
+    app.add_handler(CallbackQueryHandler(time_callback, pattern=r"^time(?:hours|:)"))
     app.add_handler(CommandHandler("feedback", feedback))
     app.add_handler(CommandHandler("disclaimer", disclaimer))
     app.add_handler(CommandHandler("help", help_command))
