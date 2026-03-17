@@ -76,6 +76,14 @@ def build_time_hour_keyboard(onboarding: bool = False) -> InlineKeyboardMarkup:
                 for hour in range(start_hour, start_hour + 4)
             ]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "Skip" if onboarding else "Cancel",
+                callback_data=f"timecancel{suffix}",
+            )
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -136,7 +144,7 @@ async def complete_subscription_onboarding(
         "\\- /yesterday \\- get yesterday's material\n"
         "\\- /tomorrow \\- get tomorrow's material\n"
         "\\- /bible \\- change bible version\n"
-        "\\- /time HH:MM \\- change devotional delivery time\n"
+        "\\- /time \\- change devotional delivery time\n"
         "\\- /unsubscribe \\- unsubscribe from daily devotionals\n\n"
         "Here's today's devotional to get you started\\. God bless\\! 🙏\n"
     )
@@ -233,18 +241,35 @@ async def send_devotional_for_date(
     update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: datetime
 ) -> None:
     cfg = context.application.bot_data["cfg"]
-    chat = update.effective_chat
+    chat = getattr(update, "effective_chat", None)
+    if chat is None:
+        query = getattr(update, "callback_query", None)
+        chat = query.message.chat if query and query.message else None
+    message = getattr(update, "effective_message", None)
+    if message is None:
+        message = getattr(update, "message", None)
+    if message is None:
+        query = getattr(update, "callback_query", None)
+        message = query.message if query else None
     version_id = get_bible_version(cfg["db_path"], chat.id) if chat else 111
     text = extract_from_json(cfg["json_path"], target_date, version_id)
     if not text:
         text = extract_devotional_for_date(cfg, target_date)
 
     for chunk in chunk_text(text):
-        await update.message.reply_text(
-            text=to_markdown(chunk),
-            parse_mode=ParseMode.MARKDOWN_V2,
-            disable_web_page_preview=True,
-        )
+        if message:
+            await message.reply_text(
+                text=to_markdown(chunk),
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+            )
+        elif chat:
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=to_markdown(chunk),
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+            )
 
 
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -279,7 +304,7 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "\\- /yesterday \\- get yesterday's material\n"
         "\\- /tomorrow \\- get tomorrow's material\n"
         "\\- /bible \\- change bible version\n"
-        "\\- /time HH:MM \\- change devotional delivery time\n"
+        "\\- /time \\- change devotional delivery time\n"
         "\\- /subscribe \\- start receiving daily devotionals\n"
         "\\- /unsubscribe \\- stop receiving daily devotionals"
     )
@@ -358,6 +383,16 @@ async def time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     await query.answer()
     data = query.data or ""
+    if data.startswith("timecancel"):
+        onboarding = data.endswith(":onboarding")
+        if onboarding:
+            await query.edit_message_text("Keeping your default devotional send time of 07:00.")
+            user = update.effective_user
+            first_name = user.first_name if user and user.first_name else "there"
+            await send_bible_picker(query.message, first_name, onboarding=True)
+            return
+        await query.edit_message_text("Time selection cancelled.")
+        return
     if data.startswith("timehours"):
         onboarding = data.endswith(":onboarding")
         current_time = "07:00"
@@ -443,7 +478,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "\\- /yesterday \\- get yesterday's material\n"
         "\\- /tomorrow \\- get tomorrow's material\n"
         "\\- /bible \\- change bible version\n"
-        "\\- /time HH:MM \\- change devotional delivery time\n"
+        "\\- /time \\- change devotional delivery time\n"
         "\\- /subscribe \\- start receiving daily devotionals\n"
         "\\- /unsubscribe \\- stop receiving daily devotionals"
     )
@@ -585,7 +620,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("unsubscribe", unsubscribe))
     app.add_handler(CallbackQueryHandler(bible_callback, pattern=r"^bible:"))
     app.add_handler(CallbackQueryHandler(time_hour_callback, pattern=r"^timehour:"))
-    app.add_handler(CallbackQueryHandler(time_callback, pattern=r"^time(?:hours|:)"))
+    app.add_handler(CallbackQueryHandler(time_callback, pattern=r"^time(?:cancel|hours|:)"))
     app.add_handler(CommandHandler("feedback", feedback))
     app.add_handler(CommandHandler("disclaimer", disclaimer))
     app.add_handler(CommandHandler("help", help_command))

@@ -52,7 +52,7 @@ def test_register_handlers_wires_expected_commands_and_callbacks() -> None:
     ]
     assert sorted(handler.pattern.pattern for handler in callback_handlers) == [
         "^bible:",
-        "^time(?:hours|:)",
+        "^time(?:cancel|hours|:)",
         "^timehour:",
     ]
 

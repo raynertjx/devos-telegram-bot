@@ -270,6 +270,7 @@ def test_time_command_without_args_shows_picker_and_current_time(
     assert "07:00" in sent_text
     assert reply_markup is not None
     assert reply_markup.inline_keyboard[0][0].text == "00"
+    assert reply_markup.inline_keyboard[-1][0].text == "Cancel"
 
 
 def test_time_command_with_invalid_arg_returns_validation_message(
@@ -365,6 +366,49 @@ def test_time_callback_during_onboarding_prompts_bible_picker(
     assert message.reply_text.await_args.kwargs["reply_markup"] is not None
 
 
+def test_time_picker_during_onboarding_shows_skip_button(
+    seeded_cfg, make_user, make_message, make_context, run_async
+) -> None:
+    message = make_message()
+    user = make_user(1, "tester", "Tester")
+    update = SimpleNamespace(
+        effective_chat=SimpleNamespace(id=123),
+        effective_user=user,
+        _effective_user=user,
+        message=message,
+    )
+
+    run_async(subscribe(update, make_context(seeded_cfg)))
+
+    reply_markup = message.reply_text.await_args_list[1].kwargs["reply_markup"]
+    assert reply_markup.inline_keyboard[-1][0].text == "Skip"
+
+
+def test_time_cancel_during_onboarding_prompts_bible_picker_without_updating_time(
+    seeded_cfg, make_user, make_seed_update, make_context, run_async
+) -> None:
+    user = make_user(1, "tester", "Tester")
+    upsert_subscriber(seeded_cfg["db_path"], make_seed_update(123, user), bible_version=111)
+
+    message = SimpleNamespace(chat=SimpleNamespace(id=123), reply_text=AsyncMock())
+    query = SimpleNamespace(
+        data="timecancel:onboarding",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+        message=message,
+    )
+    update = SimpleNamespace(callback_query=query, effective_user=user)
+
+    run_async(time_callback(update, make_context(seeded_cfg)))
+
+    assert get_preferred_send_time(seeded_cfg["db_path"], 123) == "07:00"
+    query.edit_message_text.assert_awaited_once_with(
+        "Keeping your default devotional send time of 07:00."
+    )
+    picker_text = message.reply_text.await_args.args[0]
+    assert "preferred Bible version" in picker_text
+
+
 def test_bible_callback_during_onboarding_completes_welcome_flow(
     seeded_cfg, make_user, make_seed_update, make_context, run_async
 ) -> None:
@@ -380,13 +424,15 @@ def test_bible_callback_during_onboarding_completes_welcome_flow(
     )
     update = SimpleNamespace(callback_query=query, effective_user=user, effective_message=message)
 
-    with patch("bot_handlers.today", new=AsyncMock()) as today_mock:
-        run_async(bible_callback(update, make_context(seeded_cfg)))
+    run_async(bible_callback(update, make_context(seeded_cfg)))
 
     assert get_bible_version(seeded_cfg["db_path"], 123) == 59
     query.edit_message_text.assert_awaited_once_with("Bible version set to ESV.")
-    assert "you're subscribed" in message.reply_text.await_args.kwargs["text"]
-    today_mock.assert_awaited_once()
+    assert message.reply_text.await_count >= 2
+    welcome_text = message.reply_text.await_args_list[0].kwargs["text"]
+    assert "you're subscribed" in welcome_text
+    devotional_text = message.reply_text.await_args_list[-1].kwargs["text"]
+    assert "Today" in devotional_text
 
 
 def test_help_command_inserts_subscriber_and_replies(
