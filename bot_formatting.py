@@ -43,13 +43,14 @@ def truncate(text: str, max_width: int) -> str:
 
 
 def format_subscribers_table(rows: list[tuple]) -> list[str]:
-    headers = ["Chat ID", "Username", "Name", "Bible Version"]
+    headers = ["Chat ID", "Username", "Name", "Bible Version", "Preferred Time"]
     data = []
     for row in rows:
         if len(row) == 6:
-            cid, username, first_name, bible_version, _preferred_send_time, _created_at = row
+            cid, username, first_name, bible_version, preferred_send_time, _created_at = row
         elif len(row) == 5:
             cid, username, first_name, bible_version, _created_at = row
+            preferred_send_time = "07:00"
         else:
             raise ValueError(
                 f"Unsupported subscriber row shape: expected 5 or 6 columns, got {len(row)}"
@@ -63,6 +64,7 @@ def format_subscribers_table(rows: list[tuple]) -> list[str]:
                 truncate(handle, 16),
                 truncate(name, 16),
                 truncate(version_code, 14),
+                str(preferred_send_time or "07:00"),
             ]
         )
 
