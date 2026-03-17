@@ -16,6 +16,7 @@ def init_db(db_path: str) -> None:
                 first_name TEXT,
                 bible_version INTEGER DEFAULT 111,
                 preferred_send_time TEXT NOT NULL DEFAULT '07:00',
+                last_sent_date TEXT,
                 created_at TEXT
             )
             """
@@ -29,6 +30,13 @@ def init_db(db_path: str) -> None:
                 ALTER TABLE subscribers
                 ADD COLUMN preferred_send_time TEXT NOT NULL
                 DEFAULT '{DEFAULT_PREFERRED_SEND_TIME}'
+                """
+            )
+        if "last_sent_date" not in columns:
+            conn.execute(
+                """
+                ALTER TABLE subscribers
+                ADD COLUMN last_sent_date TEXT
                 """
             )
         # Migrate existing text values to integer IDs
@@ -90,10 +98,20 @@ def list_subscribers(db_path: str) -> list[int]:
     return [row[0] for row in rows]
 
 
-def list_subscribers_with_versions(db_path: str) -> list[tuple[int, int]]:
+def list_subscribers_due_for_time(
+    db_path: str, preferred_send_time: str, target_date: str
+) -> list[tuple[int, int]]:
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT chat_id, COALESCE(bible_version, 111) FROM subscribers"
+            """
+            SELECT
+                chat_id,
+                COALESCE(bible_version, 111)
+            FROM subscribers
+            WHERE COALESCE(preferred_send_time, ?) = ?
+              AND COALESCE(last_sent_date, '') != ?
+            """,
+            (DEFAULT_PREFERRED_SEND_TIME, preferred_send_time, target_date),
         ).fetchall()
     return [(int(row[0]), int(row[1])) for row in rows]
 
@@ -134,6 +152,15 @@ def set_preferred_send_time(db_path: str, chat_id: int, preferred_send_time: str
         conn.execute(
             "UPDATE subscribers SET preferred_send_time = ? WHERE chat_id = ?",
             (preferred_send_time, chat_id),
+        )
+        conn.commit()
+
+
+def mark_subscriber_sent(db_path: str, chat_id: int, target_date: str) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE subscribers SET last_sent_date = ? WHERE chat_id = ?",
+            (target_date, chat_id),
         )
         conn.commit()
 
