@@ -658,8 +658,8 @@ def register_jobs(app: Application, cfg: dict) -> None:
     for idx, run_time in enumerate(
         (
             dtime(hour=8, minute=0, tzinfo=tz),
-            dtime(hour=14, minute=0, tzinfo=tz),
-            dtime(hour=20, minute=0, tzinfo=tz),
+            # dtime(hour=14, minute=0, tzinfo=tz),
+            # dtime(hour=20, minute=0, tzinfo=tz),
         ),
         start=1,
     ):
