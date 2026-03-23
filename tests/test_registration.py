@@ -67,6 +67,7 @@ def test_register_jobs_wires_daily_devotional_and_log_jobs() -> None:
     cfg = {
         "send_time": dtime(hour=7, minute=0, tzinfo=ZoneInfo("Asia/Singapore")),
         "timezone": "Asia/Singapore",
+        "log_group_id": -123456,
     }
 
     register_jobs(app, cfg)
@@ -74,9 +75,7 @@ def test_register_jobs_wires_daily_devotional_and_log_jobs() -> None:
     job_names = sorted(job.name for job in app.job_queue.jobs())
     assert job_names == [
         "daily-devotional",
-        "subscriber-logs-1",
-        "subscriber-logs-2",
-        "subscriber-logs-3",
+        "subscriber-logs-daily",
     ]
 
 

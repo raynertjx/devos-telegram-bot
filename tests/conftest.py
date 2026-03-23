@@ -32,6 +32,7 @@ def make_cfg():
             "feedback_url": None,
             "admin_ids": set(),
             "send_time": None,
+            "log_group_id": -5250672666,
         }
         cfg.update(overrides)
         return cfg

@@ -567,7 +567,8 @@ async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def send_logs(context: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_subscriber_list_to_chat(context, LOG_CHAT_ID)
+    cfg = context.application.bot_data["cfg"]
+    await send_subscriber_list_to_chat(context, cfg["log_group_id"])
 
 
 async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -655,17 +656,9 @@ def register_jobs(app: Application, cfg: dict) -> None:
         first=first_run_in_seconds,
         name="daily-devotional",
     )
-    for idx, run_time in enumerate(
-        (
-            dtime(hour=8, minute=0, tzinfo=tz),
-            # dtime(hour=14, minute=0, tzinfo=tz),
-            # dtime(hour=20, minute=0, tzinfo=tz),
-        ),
-        start=1,
-    ):
-        app.job_queue.run_daily(
-            send_logs,
-            time=run_time,
-            days=(0, 1, 2, 3, 4, 5, 6),
-            name=f"subscriber-logs-{idx}",
-        )
+    app.job_queue.run_daily(
+        send_logs,
+        time=dtime(hour=8, minute=0, tzinfo=tz),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        name="subscriber-logs-daily",
+    )

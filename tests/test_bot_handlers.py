@@ -13,6 +13,7 @@ from bot_handlers import (
     feedback,
     help_command,
     send_devotional,
+    send_logs,
     subscribe,
     subscribers,
     time_callback,
@@ -424,7 +425,8 @@ def test_bible_callback_during_onboarding_completes_welcome_flow(
     )
     update = SimpleNamespace(callback_query=query, effective_user=user, effective_message=message)
 
-    run_async(bible_callback(update, make_context(seeded_cfg)))
+    with patch("bot_handlers.datetime", FixedDatetime):
+        run_async(bible_callback(update, make_context(seeded_cfg)))
 
     assert get_bible_version(seeded_cfg["db_path"], 123) == 59
     query.edit_message_text.assert_awaited_once_with("Bible version set to ESV.")
@@ -518,6 +520,18 @@ def test_feedback_success_posts_and_logs(
 
     assert "Thank you for your feedback" in message.reply_text.await_args.args[0]
     assert bot.send_message.await_args.kwargs["chat_id"] == LOG_CHAT_ID
+
+
+def test_send_logs_sends_to_configured_log_group_id(
+    tmp_path, make_cfg, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, log_group_id=987654321)
+    init_db(cfg["db_path"])
+    context = make_context(cfg)
+
+    run_async(send_logs(context))
+
+    assert context.bot.send_message.await_args.kwargs["chat_id"] == 987654321
 
 
 def test_broadcast_unauthorized_returns_message(
