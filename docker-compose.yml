@@ -6,5 +6,5 @@ services:
     env_file:
       - .env
     volumes:
-      - ./bible-in-a-year-2026-volume-1-2.pdf:/app/bible-in-a-year-2026-volume-1-2.pdf:ro
+      - ./pdf:app/pdf:ro
       - ./data:/app/data
