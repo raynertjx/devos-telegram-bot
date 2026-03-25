@@ -1,7 +1,8 @@
 import json
 import os
 import re
-from datetime import datetime, date
+from glob import glob
+from datetime import datetime
 from functools import lru_cache
 from typing import Optional
 import fitz
@@ -21,10 +22,6 @@ MONTHS = (
     "December",
 )
 
-DATE_RE = re.compile(
-    rf"^(?:{'|'.join(MONTHS)})\s+\d{{1,2}}(?:,\s*\d{{4}})?",
-    re.MULTILINE,
-)
 DATE_TOPIC_RE = re.compile(r"^\d{1,2}\s+[A-Za-z]+\s*:.*$")
 VERSE_RE = re.compile(r"[A-Za-z]+\s+\d")
 HEADER_FOOTER_RE = re.compile(r"^BIBLE IN A YEAR DEVOTIONAL", re.IGNORECASE)
@@ -33,13 +30,12 @@ HEADER_FOOTER_RE = re.compile(r"^BIBLE IN A YEAR DEVOTIONAL", re.IGNORECASE)
 @lru_cache(maxsize=4)
 def load_pdf_text(pdf_path: str, mtime: float) -> list[list[str]]:
     if not os.path.exists(pdf_path):
-        return ""
+        return []
 
     pages = []
 
     with fitz.open(pdf_path) as doc:
-        for page_idx, page in enumerate(doc[6: 96]):
-            text = page.get_text() or ""
+        for _, page in enumerate(doc[6: 96]):
             paragraphs = page.get_text("blocks")
             split_paragraphs = []
             for paragraph_idx, paragraph in enumerate(paragraphs):
@@ -192,38 +188,76 @@ def load_existing_meta(json_path: str) -> dict:
     except (json.JSONDecodeError, OSError):
         return {}
 
-def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+def resolve_pdf_paths() -> list[str]:
+    pdf_paths_raw = os.getenv("DEVOTIONAL_PDFS", "")
+    legacy_pdf_path = os.getenv("DEVOTIONAL_PDF")
+    pdf_dir = os.getenv("DEVOTIONAL_PDF_DIR", "./pdf")
 
-    mtime = os.path.getmtime(pdf_path)
-    meta = load_existing_meta(json_path)
+    if pdf_paths_raw.strip():
+        pdf_paths = [path.strip() for path in pdf_paths_raw.split(",") if path.strip()]
+    elif legacy_pdf_path and os.path.isfile(legacy_pdf_path):
+        pdf_paths = [legacy_pdf_path]
+    else:
+        pdf_paths = sorted(glob(os.path.join(pdf_dir, "*.pdf")))
 
-    combined = load_pdf_text(pdf_path, mtime)
-    if not combined:
-        raise RuntimeError("PDF appears empty or unreadable.")
+    if not pdf_paths:
+        raise FileNotFoundError(
+            "No devotional PDFs found. Set DEVOTIONAL_PDFS or place PDF files in ./pdf/."
+        )
 
-    entries = split_entries(combined)
-    devotionals: dict[str, str] = {}
+    missing = [path for path in pdf_paths if not os.path.exists(path)]
+    if missing:
+        raise FileNotFoundError(f"PDF not found: {missing[0]}")
+
+    return pdf_paths
+
+
+def build_json(pdf_paths: list[str], json_path: str, default_year: int) -> None:
+    if not pdf_paths:
+        raise FileNotFoundError("At least one PDF path is required.")
+
+    devotionals: dict[str, dict] = {}
+    source_mtimes: dict[str, float] = {}
     skipped = 0
-    skipped_dates = []
+    duplicate_dates = []
 
-    for devo_dict in entries:
-        parsed_date = parse_header_date(devo_dict["date_topic"], default_year=default_year)
-        if not parsed_date:
-            skipped += 1
-            skipped_dates.append(devo_dict["date_topic"])
-            continue
-        cutoff = datetime(2026, 2, 22).date()
-        if parsed_date.date() < cutoff:
-            continue
-        parsed_date_string = parsed_date.strftime('%d-%m-%Y')
-        devotionals[parsed_date_string] = devo_dict
+    for pdf_path in pdf_paths:
+        mtime = os.path.getmtime(pdf_path)
+        source_mtimes[pdf_path] = mtime
+
+        combined = load_pdf_text(pdf_path, mtime)
+        if not combined:
+            raise RuntimeError(f"PDF appears empty or unreadable: {pdf_path}")
+
+        entries = split_entries(combined)
+
+        for devo_dict in entries:
+            parsed_date = parse_header_date(
+                devo_dict["date_topic"], default_year=default_year
+            )
+            if not parsed_date:
+                skipped += 1
+                continue
+
+            cutoff = datetime(2026, 2, 22).date()
+            if parsed_date.date() < cutoff:
+                continue
+
+            parsed_date_string = parsed_date.strftime("%d-%m-%Y")
+            if parsed_date_string in devotionals:
+                duplicate_dates.append(parsed_date_string)
+                continue
+
+            devotionals[parsed_date_string] = devo_dict
+
+    if duplicate_dates:
+        duplicate_summary = ", ".join(sorted(set(duplicate_dates)))
+        raise RuntimeError(f"Duplicate devotional dates found across PDFs: {duplicate_summary}")
 
     payload = {
         "_meta": {
-            "source_pdf": pdf_path,
-            "source_mtime": mtime,
+            "source_pdfs": pdf_paths,
+            "source_mtimes": source_mtimes,
             "default_year": default_year,
             "generated_at": datetime.utcnow().isoformat() + "Z",
             "entries": len(devotionals),
@@ -235,14 +269,17 @@ def build_json(pdf_path: str, json_path: str, default_year: int) -> None:
     with open(json_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
-    print(f"Wrote {len(devotionals)} entries to {json_path} (skipped {skipped}).")
+    print(
+        f"Wrote {len(devotionals)} entries from {len(pdf_paths)} PDF(s) "
+        f"to {json_path} (skipped {skipped})."
+    )
 
 
 def main() -> None:
-    pdf_path = os.getenv("DEVOTIONAL_PDF", "./bible-in-a-year-2026-volume-1-2.pdf")
-    json_path = os.getenv("DEVOTIONAL_JSON", "./devotionals.json")
+    pdf_paths = resolve_pdf_paths()
+    json_path = os.getenv("DEVOTIONAL_JSON", "./data/devotionals.json")
     default_year = int(os.getenv("DEVOTIONAL_YEAR", "2026"))
-    build_json(pdf_path=pdf_path, json_path=json_path, default_year=default_year)
+    build_json(pdf_paths=pdf_paths, json_path=json_path, default_year=default_year)
 
 
 if __name__ == "__main__":

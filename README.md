@@ -25,6 +25,8 @@ Optional: Prebuild JSON for faster lookups (only rewrites when PDF changes):
 python build_devotionals_json.py
 ```
 
+By default, the builder reads all `*.pdf` files from `./pdf/` and combines them into one `./devotionals.json`.
+
 ## Notes
 
 - The PDF extraction is intentionally minimal. Update `extract_devotional_for_date` in `main.py` to match the PDF's structure.
@@ -33,5 +35,6 @@ python build_devotionals_json.py
 - `ADMIN_IDS` is a comma-separated list of numeric Telegram user IDs allowed to use `/broadcast`.
 - `CHAT_ID` is optional (fallback target if no subscribers exist).
 - `DEVOTIONAL_JSON` (default `./devotionals.json`) is read first; it falls back to PDF if missing.
+- `build_devotionals_json.py` prefers all PDFs in `./pdf/`, or you can override with `DEVOTIONAL_PDFS=./pdf/vol1.pdf,./pdf/vol2.pdf`.
 - The message is sent in `<pre>` HTML to preserve line breaks and spacing.
 - Use `/today` to test the current day's devotional immediately.
