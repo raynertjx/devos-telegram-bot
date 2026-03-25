@@ -12,4 +12,3 @@ build/
 *.log
 subscribers.sqlite3
 devotionals.json
-*.pdf
