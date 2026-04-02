@@ -589,10 +589,11 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     async with httpx.AsyncClient() as client:
+        feedback_message = " ".join(context.args)
         payload = {
             "chat_id": user.id,
             "username": f"@{user.username}" if user.username else user.first_name,
-            "message": " ".join(context.args),
+            "message": feedback_message,
         }
         try:
             response = await client.post(
@@ -603,11 +604,16 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     "Thank you for your feedback\\! The developer will take a look at it\\. 😄",
                     parse_mode=ParseMode.MARKDOWN_V2,
                 )
+                escaped_name = escape_markdown_v2(user.first_name or "Unknown")
+                escaped_username = (
+                    escape_markdown_v2(f"@{user.username}") if user.username else "N/A"
+                )
+                escaped_feedback = escape_markdown_v2(feedback_message)
                 log_message = (
                     "📩 **New Feedback\\!**\n"
-                    f"From: {user.first_name} \\(@{user.username}\\)\n"
+                    f"From: {escaped_name} \\({escaped_username}\\)\n"
                     f"ID: `{user.id}`\n\n"
-                    f"Message: {' '.join(context.args)}"
+                    f"Message: {escaped_feedback}"
                 )
                 await context.bot.send_message(
                     chat_id=LOG_CHAT_ID,

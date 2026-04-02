@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from bot_constants import DISCLAIMER_TEXT, LOG_CHAT_ID
+from bot_formatting import escape_markdown_v2
 from bot_handlers import (
     bible,
     bible_callback,
@@ -520,6 +521,34 @@ def test_feedback_success_posts_and_logs(
 
     assert "Thank you for your feedback" in message.reply_text.await_args.args[0]
     assert bot.send_message.await_args.kwargs["chat_id"] == LOG_CHAT_ID
+
+
+def test_feedback_escapes_markdown_v2_characters_in_log_message(
+    tmp_path, make_cfg, make_user, make_message, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, feedback_url="https://example.com/feedback")
+    init_db(cfg["db_path"])
+    message = make_message()
+    bot = SimpleNamespace(send_message=AsyncMock())
+    feedback_text = "This bot is great! [seriously] (v2) #blessed"
+    context = make_context(cfg, args=feedback_text.split(" "), bot=bot)
+    update = SimpleNamespace(
+        effective_user=make_user(1, "test_er", "Test.er"),
+        message=message,
+    )
+
+    client = AsyncMock()
+    client.post.return_value = SimpleNamespace(status_code=200)
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+
+    with patch("bot_handlers.httpx.AsyncClient", return_value=client):
+        run_async(feedback(update, context))
+
+    sent_text = bot.send_message.await_args.kwargs["text"]
+    assert f"From: {escape_markdown_v2('Test.er')} \\({escape_markdown_v2('@test_er')}\\)" in sent_text
+    assert f"Message: {escape_markdown_v2(feedback_text)}" in sent_text
+    assert bot.send_message.await_args.kwargs["parse_mode"].value == "MarkdownV2"
 
 
 def test_send_logs_sends_to_configured_log_group_id(
