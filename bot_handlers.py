@@ -293,20 +293,6 @@ async def tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-<<<<<<< Updated upstream
-def parse_admin_devotional_date(value: str, timezone: str) -> datetime | None:
-    normalized = value.strip()
-    formats = ("%d%m%y", "%d%m%Y")
-    for date_format in formats:
-        try:
-            parsed = datetime.strptime(normalized, date_format)
-            return parsed.replace(tzinfo=ZoneInfo(timezone))
-        except ValueError:
-            continue
-    return None
-=======
-<<<<<<< Updated upstream
-=======
 def parse_admin_devotional_date(value: str, timezone: str) -> datetime | None:
     normalized = value.strip()
     formats_by_length = {
@@ -321,8 +307,6 @@ def parse_admin_devotional_date(value: str, timezone: str) -> datetime | None:
         return parsed.replace(tzinfo=ZoneInfo(timezone))
     except ValueError:
         return None
->>>>>>> Stashed changes
-
 
 async def senddevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
@@ -342,12 +326,6 @@ async def senddevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await send_devotional_for_date(update, context, target_date)
-
-
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
->>>>>>> Stashed changes
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     del context
     message = update.effective_message
