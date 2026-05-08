@@ -13,6 +13,7 @@ from bot_handlers import (
     disclaimer,
     feedback,
     help_command,
+    senddevo,
     send_devotional,
     send_logs,
     subscribe,
@@ -572,6 +573,64 @@ def test_broadcast_unauthorized_returns_message(
     run_async(broadcast(update, make_context(seeded_cfg, args=["hello"])))
 
     message.reply_text.assert_awaited_once_with("Unauthorized.")
+
+
+def test_senddevo_unauthorized_returns_message(
+    seeded_cfg, make_message, make_context, run_async
+) -> None:
+    message = make_message()
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=1), effective_message=message)
+
+    run_async(senddevo(update, make_context(seeded_cfg, args=["170326"])))
+
+    message.reply_text.assert_awaited_once_with("Unauthorized.")
+
+
+def test_senddevo_without_args_returns_usage(
+    tmp_path, make_cfg, make_message, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, admin_ids={99})
+    init_db(cfg["db_path"])
+    message = make_message()
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=99), effective_message=message)
+
+    run_async(senddevo(update, make_context(cfg, args=[])))
+
+    message.reply_text.assert_awaited_once_with("Usage: /senddevo <DDMMYY>")
+
+
+def test_senddevo_with_invalid_date_returns_validation_message(
+    tmp_path, make_cfg, make_message, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, admin_ids={99})
+    init_db(cfg["db_path"])
+    message = make_message()
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=99), effective_message=message)
+
+    run_async(senddevo(update, make_context(cfg, args=["320326"])))
+
+    message.reply_text.assert_awaited_once_with(
+        "Invalid date. Use DDMMYY, for example /senddevo 170326."
+    )
+
+
+def test_senddevo_sends_devotional_for_requested_date(
+    seeded_cfg, make_message, make_context, run_async
+) -> None:
+    cfg = dict(seeded_cfg)
+    cfg["admin_ids"] = {99}
+    message = make_message()
+    update = SimpleNamespace(
+        effective_chat=SimpleNamespace(id=123),
+        effective_user=SimpleNamespace(id=99),
+        effective_message=message,
+        message=message,
+    )
+
+    run_async(senddevo(update, make_context(cfg, args=["160326"])))
+
+    assert message.reply_text.await_count >= 1
+    assert "Yesterday" in message.reply_text.await_args.kwargs["text"]
 
 
 def test_broadcast_without_args_returns_usage(

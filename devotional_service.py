@@ -3,15 +3,25 @@ import os
 import re
 from datetime import datetime
 from functools import lru_cache
+from pathlib import Path
 
-import fitz
+try:
+    import fitz
+except ImportError:  # pragma: no cover - optional in test environments
+    fitz = None
 
 from bot_constants import BIBLE_MAP, VERSION_ID_TO_CODE
 from bot_formatting import escape_markdown_v2, md_link
 
 
+BIBLE_VERSE_COUNTS_PATH = Path(__file__).resolve().parent / "data" / "bible.json"
+
+
 @lru_cache(maxsize=4)
 def load_pdf_text(pdf_path: str, mtime: float) -> str:
+    if fitz is None:
+        return ""
+
     if not os.path.exists(pdf_path):
         return ""
 
@@ -23,29 +33,136 @@ def load_pdf_text(pdf_path: str, mtime: float) -> str:
     return "\n\n".join(pages)
 
 
-def generate_youversion_link(passage_string: str, version_id: int = 111):
+def _split_book_and_reference(passage_string: str) -> tuple[str, str]:
+    for book_name in sorted(BIBLE_MAP, key=len, reverse=True):
+        if passage_string == book_name:
+            return book_name, ""
+        if passage_string.startswith(f"{book_name} "):
+            return book_name, passage_string[len(book_name) + 1 :].strip()
+
     parts = passage_string.split(" ", 1)
-    book_name = parts[0]
-    reference = parts[1] if len(parts) > 1 else ""
+    return parts[0], parts[1] if len(parts) > 1 else ""
+
+
+def _build_youversion_url(abbr: str, version_id: int, reference: str = "") -> str:
+    url = f"https://www.bible.com/bible/{version_id}/{abbr}"
+    if reference:
+        url += f".{reference.replace(':', '.')}"
+    return url
+
+
+@lru_cache(maxsize=1)
+def load_bible_verse_counts() -> dict[str, dict[int, int]]:
+    if not BIBLE_VERSE_COUNTS_PATH.exists():
+        return {}
+
+    try:
+        with BIBLE_VERSE_COUNTS_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    verse_counts: dict[str, dict[int, int]] = {}
+    if not isinstance(payload, list):
+        return verse_counts
+
+    for book_entry in payload:
+        if not isinstance(book_entry, dict):
+            continue
+
+        book_name = book_entry.get("book")
+        chapters = book_entry.get("chapters")
+        if not isinstance(book_name, str) or not isinstance(chapters, list):
+            continue
+
+        chapter_counts: dict[int, int] = {}
+        for chapter_entry in chapters:
+            if not isinstance(chapter_entry, dict):
+                continue
+            try:
+                chapter = int(chapter_entry["chapter"])
+                verses = int(chapter_entry["verses"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            chapter_counts[chapter] = verses
+
+        if chapter_counts:
+            verse_counts[book_name] = chapter_counts
+
+    return verse_counts
+
+
+def _chapter_verse_count(book_name: str, chapter: int) -> int | None:
+    return load_bible_verse_counts().get(book_name, {}).get(chapter)
+
+
+def generate_youversion_link(passage_string: str, version_id: int = 111):
+    book_name, reference = _split_book_and_reference(passage_string.strip())
 
     abbr = BIBLE_MAP.get(book_name, book_name[:3].upper())
 
-    if reference and ":" not in reference and "-" in reference:
-        start_end = reference.split("-", 1)
-        if len(start_end) == 2 and start_end[0].isdigit() and start_end[1].isdigit():
-            start = int(start_end[0])
-            end = int(start_end[1])
-            links = []
-            for chapter in range(start, end + 1):
-                url = f"https://www.bible.com/bible/{version_id}/{abbr}.{chapter}"
-                links.append(md_link(f"{book_name} {chapter}", url))
+    chapter_range_match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", reference)
+    if chapter_range_match:
+        start = int(chapter_range_match.group(1))
+        end = int(chapter_range_match.group(2))
+        if start <= end:
+            return [
+                md_link(
+                    f"{book_name} {chapter}",
+                    _build_youversion_url(abbr, version_id, str(chapter)),
+                )
+                for chapter in range(start, end + 1)
+            ]
+
+    cross_chapter_match = re.fullmatch(
+        r"(\d+):(\d+)\s*-\s*(\d+):(\d+)", reference
+    )
+    if cross_chapter_match:
+        start_chapter = int(cross_chapter_match.group(1))
+        start_verse = int(cross_chapter_match.group(2))
+        end_chapter = int(cross_chapter_match.group(3))
+        end_verse = int(cross_chapter_match.group(4))
+
+        if start_chapter < end_chapter:
+            start_chapter_last_verse = _chapter_verse_count(book_name, start_chapter)
+            if start_chapter_last_verse is None:
+                links = [
+                    md_link(
+                        f"{book_name} {start_chapter}:{start_verse}-end",
+                        _build_youversion_url(
+                            abbr, version_id, f"{start_chapter}:{start_verse}"
+                        ),
+                    )
+                ]
+            else:
+                links = [
+                    md_link(
+                        f"{book_name} {start_chapter}:{start_verse}-{start_chapter_last_verse}",
+                        _build_youversion_url(
+                            abbr,
+                            version_id,
+                            f"{start_chapter}:{start_verse}-{start_chapter_last_verse}",
+                        ),
+                    )
+                ]
+            for chapter in range(start_chapter + 1, end_chapter):
+                links.append(
+                    md_link(
+                        f"{book_name} {chapter}",
+                        _build_youversion_url(abbr, version_id, str(chapter)),
+                    )
+                )
+            links.append(
+                md_link(
+                    f"{book_name} {end_chapter}:1-{end_verse}",
+                    _build_youversion_url(
+                        abbr, version_id, f"{end_chapter}:1-{end_verse}"
+                    ),
+                )
+            )
             return links
 
-    clean_ref = reference.replace(":", ".") if reference else ""
-    url = f"https://www.bible.com/bible/{version_id}/{abbr}"
-    if clean_ref:
-        url += f".{clean_ref}"
-    return md_link(passage_string, url)
+    return md_link(passage_string, _build_youversion_url(abbr, version_id, reference))
 
 
 def generate_verse_links(verses: str, version_id: int) -> str:

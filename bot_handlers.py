@@ -293,6 +293,38 @@ async def tomorrow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def parse_admin_devotional_date(value: str, timezone: str) -> datetime | None:
+    normalized = value.strip()
+    formats = ("%d%m%y", "%d%m%Y")
+    for date_format in formats:
+        try:
+            parsed = datetime.strptime(normalized, date_format)
+            return parsed.replace(tzinfo=ZoneInfo(timezone))
+        except ValueError:
+            continue
+    return None
+
+
+async def senddevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cfg = context.application.bot_data["cfg"]
+    message = update.effective_message
+    if not message:
+        return
+    if not is_admin(cfg, update):
+        await message.reply_text("Unauthorized.")
+        return
+    if not context.args:
+        await message.reply_text("Usage: /senddevo <DDMMYY>")
+        return
+
+    target_date = parse_admin_devotional_date(context.args[0], cfg["timezone"])
+    if target_date is None:
+        await message.reply_text("Invalid date. Use DDMMYY, for example /senddevo 170326.")
+        return
+
+    await send_devotional_for_date(update, context, target_date)
+
+
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     del context
     message = update.effective_message
@@ -637,6 +669,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("today", today))
     app.add_handler(CommandHandler("yesterday", yesterday))
     app.add_handler(CommandHandler("tomorrow", tomorrow))
+    app.add_handler(CommandHandler("senddevo", senddevo))
     app.add_handler(CommandHandler("bible", bible))
     app.add_handler(CommandHandler("time", time_command))
     app.add_handler(CommandHandler("subscribe", subscribe))

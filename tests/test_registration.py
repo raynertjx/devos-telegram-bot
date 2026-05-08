@@ -34,6 +34,7 @@ def test_register_handlers_wires_expected_commands_and_callbacks() -> None:
             "today",
             "yesterday",
             "tomorrow",
+            "senddevo",
             "bible",
             "time",
             "subscribe",
