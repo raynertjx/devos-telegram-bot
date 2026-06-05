@@ -38,6 +38,8 @@ python main.py
 DEVOTIONAL_PDFS=./pdf/volume-1.pdf,./pdf/volume-2.pdf python build_devotionals_json.py
 ```
 
+> :warning: The extraction logic in `build_devotionals_json.py` is tailored to PDFs where each devotional day is laid out on a single page with a consistent structure, like the Lighthouse Evangelism Bible-in-a-year devotional PDFs. Other PDF formats may need parser changes before the generated JSON is accurate.
+
 ## Docker
 
 Build and run the service with Docker Compose:
