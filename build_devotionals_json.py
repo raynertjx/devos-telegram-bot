@@ -2,7 +2,7 @@ import json
 import os
 import re
 from glob import glob
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from typing import Optional
 import fitz
@@ -192,6 +192,40 @@ def load_existing_meta(json_path: str) -> dict:
     except (json.JSONDecodeError, OSError):
         return {}
 
+def check_date_coverage(devotionals: dict[str, dict], cutoff: date) -> None:
+    if not devotionals:
+        return
+
+    parsed_dates = []
+    for key in devotionals:
+        try:
+            parsed_dates.append(datetime.strptime(key, "%d-%m-%Y").date())
+        except ValueError:
+            continue
+
+    if not parsed_dates:
+        return
+
+    earliest = min(parsed_dates)
+    latest = max(parsed_dates)
+    start = max(datetime.utcnow().date(), cutoff)
+    print(f"Coverage: {earliest.strftime('%d-%m-%Y')} to {latest.strftime('%d-%m-%Y')}")
+
+    missing = []
+    current = start
+    while current <= latest:
+        key = current.strftime("%d-%m-%Y")
+        if key not in devotionals:
+            missing.append(key)
+        current += timedelta(days=1)
+
+    if missing:
+        print(
+            f"WARNING: Missing devotionals for {len(missing)} date(s): "
+            f"{', '.join(missing)}"
+        )
+
+
 def resolve_pdf_paths() -> list[str]:
     pdf_paths_raw = os.getenv("DEVOTIONAL_PDFS", "")
     legacy_pdf_path = os.getenv("DEVOTIONAL_PDF")
@@ -253,6 +287,8 @@ def build_json(pdf_paths: list[str], json_path: str, default_year: int) -> None:
                 continue
 
             devotionals[parsed_date_string] = devo_dict
+
+    check_date_coverage(devotionals, cutoff)
 
     if duplicate_dates:
         duplicate_summary = ", ".join(sorted(set(duplicate_dates)))
