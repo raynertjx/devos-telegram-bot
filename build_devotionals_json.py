@@ -33,9 +33,13 @@ def load_pdf_text(pdf_path: str, mtime: float) -> list[list[str]]:
         return []
 
     pages = []
+    
+    START_PAGE = 5
+    if pdf_path == "./pdf/volume-3.pdf":
+        START_PAGE = 4
 
     with fitz.open(pdf_path) as doc:
-        for _, page in enumerate(doc[5: 96]):
+        for _, page in enumerate(doc[START_PAGE: 96]):
             paragraphs = page.get_text("blocks")
             split_paragraphs = []
             for paragraph_idx, paragraph in enumerate(paragraphs):
