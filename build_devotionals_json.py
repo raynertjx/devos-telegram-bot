@@ -37,6 +37,8 @@ def load_pdf_text(pdf_path: str, mtime: float) -> list[list[str]]:
     START_PAGE = 5
     if pdf_path == "./pdf/volume-3.pdf":
         START_PAGE = 4
+    if pdf_path == "./pdf/volume-4.pdf":
+        START_PAGE = 4
 
     with fitz.open(pdf_path) as doc:
         for _, page in enumerate(doc[START_PAGE: 96]):
