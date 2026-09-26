@@ -276,6 +276,7 @@ def build_json(pdf_paths: list[str], json_path: str, default_year: int) -> None:
                 devo_dict["date_topic"], default_year=default_year
             )
             if not parsed_date:
+                print(f"Skipped entry: {devo_dict}")
                 skipped += 1
                 continue
 
