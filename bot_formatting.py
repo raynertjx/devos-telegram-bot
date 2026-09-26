@@ -42,6 +42,37 @@ def truncate(text: str, max_width: int) -> str:
     return "".join(out) + "…"
 
 
+def format_subscriber_report(stats: dict, report_date: str) -> str:
+    lines = [
+        f"📊 *Daily Subscriber Report* — {escape_markdown_v2(report_date)}",
+        "",
+        f"*Total subscribers:* `{stats['total']}`",
+        f"*New since last report:* `{stats['new_since']}`",
+        "",
+        "*Bible versions:*",
+    ]
+
+    by_version = stats.get("by_version") or []
+    if by_version:
+        for version_id, count in by_version:
+            code = VERSION_ID_TO_CODE.get(int(version_id), str(version_id))
+            lines.append(f"{escape_markdown_v2(code)}: `{count}`")
+    else:
+        lines.append("_None_")
+
+    lines.append("")
+    lines.append("*Preferred send times:*")
+
+    by_time = stats.get("by_time") or []
+    if by_time:
+        for send_time, count in by_time:
+            lines.append(f"{escape_markdown_v2(str(send_time))}: `{count}`")
+    else:
+        lines.append("_None_")
+
+    return "\n".join(lines)
+
+
 def format_subscribers_table(rows: list[tuple]) -> list[str]:
     headers = ["Chat ID", "Username", "Name", "Bible Version", "Preferred Time"]
     data = []

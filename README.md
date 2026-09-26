@@ -122,13 +122,14 @@ Admin commands, limited to users in `ADMIN_IDS`:
 - `/senddevo DDMMYY`: Send a devotional for a specific date, for example `/senddevo 170326`.
 - `/broadcast message`: Send a plain message to all subscribers.
 - `/subscribers`: Show the subscriber list.
+- `/summary`: Show the subscriber summary report (total count, new subscribers, and breakdowns by Bible version and preferred send time).
 
 ## Scheduled Jobs
 
 The bot registers two scheduled jobs:
 
 - `daily-devotional`: Runs every 10 minutes and sends devotionals to subscribers whose preferred send time matches the current `HH:MM`. Each subscriber is marked by date to avoid duplicate sends.
-- `subscriber-logs-daily`: Runs every day at `08:00` in `TIMEZONE` and sends the subscriber list to `LOG_GROUP_ID`.
+- `subscriber-logs-daily`: Runs every day at `08:00` in `TIMEZONE` and sends a daily subscriber report (total count, new subscribers, and breakdowns by Bible version and preferred send time) to `LOG_GROUP_ID`.
 
 ## Deployment
 

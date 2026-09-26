@@ -18,6 +18,7 @@ from bot_handlers import (
     send_logs,
     subscribe,
     subscribers,
+    summary,
     time_callback,
     time_command,
     time_hour_callback,
@@ -564,6 +565,34 @@ def test_send_logs_sends_to_configured_log_group_id(
     assert context.bot.send_message.await_args.kwargs["chat_id"] == 987654321
 
 
+def test_send_logs_sends_daily_report_not_full_subscriber_list(
+    tmp_path, make_cfg, make_user, make_seed_update, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, log_group_id=987654321)
+    init_db(cfg["db_path"])
+    upsert_subscriber(
+        cfg["db_path"], make_seed_update(111, make_user(1, "one", "One")), bible_version=111
+    )
+    upsert_subscriber(
+        cfg["db_path"], make_seed_update(222, make_user(2, "two", "Two")), bible_version=59
+    )
+    set_preferred_send_time(cfg["db_path"], 111, "08:30")
+    context = make_context(cfg)
+
+    run_async(send_logs(context))
+
+    kwargs = context.bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 987654321
+    sent_text = kwargs["text"]
+    assert "Daily Subscriber Report" in sent_text
+    assert "Total subscribers:" in sent_text
+    assert "`2`" in sent_text
+    assert "NIV" in sent_text
+    assert "ESV" in sent_text
+    assert "08:30" in sent_text
+    assert "Chat ID" not in sent_text
+
+
 def test_broadcast_unauthorized_returns_message(
     seeded_cfg, make_message, make_context, run_async
 ) -> None:
@@ -748,6 +777,44 @@ def test_subscribers_admin_sends_table(
     assert "TOTAL SUBSCRIBERS" in sent_text
     assert "Preferred Time" in sent_text
     assert "08:30" in sent_text
+
+
+def test_summary_unauthorized_returns_message(
+    seeded_cfg, make_message, make_context, run_async
+) -> None:
+    message = make_message()
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=1), effective_message=message)
+
+    run_async(summary(update, make_context(seeded_cfg)))
+
+    message.reply_text.assert_awaited_once_with("Unauthorized.")
+
+
+def test_summary_admin_sends_report_to_requesting_chat(
+    tmp_path, make_cfg, make_user, make_seed_update, make_context, run_async
+) -> None:
+    cfg = make_cfg(tmp_path, admin_ids={99})
+    init_db(cfg["db_path"])
+    upsert_subscriber(
+        cfg["db_path"], make_seed_update(111, make_user(1, "one", "One")), bible_version=111
+    )
+    set_preferred_send_time(cfg["db_path"], 111, "08:30")
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = make_context(cfg, bot=bot)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=99),
+        effective_message=SimpleNamespace(chat=SimpleNamespace(id=999)),
+    )
+
+    run_async(summary(update, context))
+
+    kwargs = bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 999
+    sent_text = kwargs["text"]
+    assert "Daily Subscriber Report" in sent_text
+    assert "Total subscribers:" in sent_text
+    assert "08:30" in sent_text
+    assert "Chat ID" not in sent_text
 
 
 def test_send_devotional_uses_stored_bible_version(

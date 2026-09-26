@@ -45,6 +45,7 @@ def test_register_handlers_wires_expected_commands_and_callbacks() -> None:
             "help",
             "broadcast",
             "subscribers",
+            "summary",
         ]
     )
 

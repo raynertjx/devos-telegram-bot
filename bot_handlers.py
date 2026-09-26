@@ -16,7 +16,12 @@ from telegram.ext import (
 )
 
 from bot_constants import BIBLE_VERSIONS, DISCLAIMER_TEXT, LOG_CHAT_ID, TO_IGNORE_CHAT_IDS
-from bot_formatting import escape_markdown_v2, format_subscribers_table, to_markdown
+from bot_formatting import (
+    escape_markdown_v2,
+    format_subscriber_report,
+    format_subscribers_table,
+    to_markdown,
+)
 from db import (
     get_bible_version,
     get_preferred_send_time,
@@ -28,6 +33,7 @@ from db import (
     remove_subscriber,
     set_bible_version,
     set_preferred_send_time,
+    subscriber_stats,
     upsert_subscriber,
 )
 from devotional_service import chunk_text, extract_devotional_for_date, extract_from_json
@@ -599,9 +605,36 @@ async def subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await send_subscriber_list_to_chat(context, message.chat.id)
 
 
+async def send_subscriber_report_to_chat(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int
+) -> None:
+    cfg = context.application.bot_data["cfg"]
+    since = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+    stats = subscriber_stats(cfg["db_path"], since)
+    report_date = datetime.now(ZoneInfo(cfg["timezone"])).strftime("%d %b %Y")
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=format_subscriber_report(stats, report_date),
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True,
+    )
+
+
+async def summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(context.application.bot_data["cfg"], update):
+        message = update.effective_message
+        if message:
+            await message.reply_text("Unauthorized.")
+        return
+    message = update.effective_message
+    if not message:
+        return
+    await send_subscriber_report_to_chat(context, message.chat.id)
+
+
 async def send_logs(context: ContextTypes.DEFAULT_TYPE) -> None:
     cfg = context.application.bot_data["cfg"]
-    await send_subscriber_list_to_chat(context, cfg["log_group_id"])
+    await send_subscriber_report_to_chat(context, cfg["log_group_id"])
 
 
 async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -684,6 +717,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("subscribers", subscribers))
+    app.add_handler(CommandHandler("summary", summary))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
 

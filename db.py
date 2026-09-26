@@ -173,6 +173,41 @@ def mark_subscriber_sent(db_path: str, chat_id: int, target_date: str) -> None:
         conn.commit()
 
 
+def subscriber_stats(db_path: str, since: str) -> dict:
+    with sqlite3.connect(db_path) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM subscribers").fetchone()[0]
+        new_since = conn.execute(
+            "SELECT COUNT(*) FROM subscribers WHERE created_at >= ?", (since,)
+        ).fetchone()[0]
+        by_version = conn.execute(
+            """
+            SELECT COALESCE(bible_version, 111), COUNT(*)
+            FROM subscribers
+            GROUP BY COALESCE(bible_version, 111)
+            ORDER BY COUNT(*) DESC
+            """
+        ).fetchall()
+        by_time = conn.execute(
+            """
+            SELECT COALESCE(preferred_send_time, ?), COUNT(*)
+            FROM subscribers
+            GROUP BY COALESCE(preferred_send_time, ?)
+            ORDER BY COALESCE(preferred_send_time, ?) ASC
+            """,
+            (
+                DEFAULT_PREFERRED_SEND_TIME,
+                DEFAULT_PREFERRED_SEND_TIME,
+                DEFAULT_PREFERRED_SEND_TIME,
+            ),
+        ).fetchall()
+    return {
+        "total": int(total),
+        "new_since": int(new_since),
+        "by_version": [(int(row[0]), int(row[1])) for row in by_version],
+        "by_time": [(str(row[0]), int(row[1])) for row in by_time],
+    }
+
+
 def list_subscribers_full(db_path: str) -> list[tuple]:
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
