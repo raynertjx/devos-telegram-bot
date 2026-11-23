@@ -187,24 +187,10 @@ def subscriber_stats(db_path: str, since: str) -> dict:
             ORDER BY COUNT(*) DESC
             """
         ).fetchall()
-        by_time = conn.execute(
-            """
-            SELECT COALESCE(preferred_send_time, ?), COUNT(*)
-            FROM subscribers
-            GROUP BY COALESCE(preferred_send_time, ?)
-            ORDER BY COALESCE(preferred_send_time, ?) ASC
-            """,
-            (
-                DEFAULT_PREFERRED_SEND_TIME,
-                DEFAULT_PREFERRED_SEND_TIME,
-                DEFAULT_PREFERRED_SEND_TIME,
-            ),
-        ).fetchall()
     return {
         "total": int(total),
         "new_since": int(new_since),
         "by_version": [(int(row[0]), int(row[1])) for row in by_version],
-        "by_time": [(str(row[0]), int(row[1])) for row in by_time],
     }
 
 

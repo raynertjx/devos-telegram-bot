@@ -60,16 +60,6 @@ def format_subscriber_report(stats: dict, report_date: str) -> str:
     else:
         lines.append("_None_")
 
-    lines.append("")
-    lines.append("*Preferred send times:*")
-
-    by_time = stats.get("by_time") or []
-    if by_time:
-        for send_time, count in by_time:
-            lines.append(f"{escape_markdown_v2(str(send_time))}: `{count}`")
-    else:
-        lines.append("_None_")
-
     return "\n".join(lines)
 
 
