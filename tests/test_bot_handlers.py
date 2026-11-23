@@ -589,7 +589,8 @@ def test_send_logs_sends_daily_report_not_full_subscriber_list(
     assert "`2`" in sent_text
     assert "NIV" in sent_text
     assert "ESV" in sent_text
-    assert "08:30" in sent_text
+    assert "08:30" not in sent_text
+    assert "Preferred send times" not in sent_text
     assert "Chat ID" not in sent_text
 
 
@@ -813,7 +814,8 @@ def test_summary_admin_sends_report_to_requesting_chat(
     sent_text = kwargs["text"]
     assert "Daily Subscriber Report" in sent_text
     assert "Total subscribers:" in sent_text
-    assert "08:30" in sent_text
+    assert "08:30" not in sent_text
+    assert "Preferred send times" not in sent_text
     assert "Chat ID" not in sent_text
 
 
